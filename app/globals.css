@@ -3,21 +3,45 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
+  --background: #f9fafb;
   --foreground: #171717;
-}
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* 狀態色彩系統 */
+  --status-excellent: #2563EB;
+  --status-good: #16A34A;
+  --status-watch: #CA8A04;
+  --status-warning: #EA580C;
+  --status-alert: #DC2626;
+  --status-neutral: #9CA3AF;
+
+  /* 管制圖色彩 */
+  --chart-zone-normal: rgba(22, 163, 74, 0.08);
+  --chart-zone-caution: rgba(234, 88, 12, 0.08);
+  --chart-zone-danger: rgba(220, 38, 38, 0.08);
+  --chart-cl: #6B7280;
+  --chart-ucl: #DC2626;
+  --chart-lcl: #DC2626;
+  --chart-sigma2: #EA580C;
+  --chart-peer: #2563EB;
+  --chart-data: #1C1917;
+
+  /* 類別色彩 */
+  --cat-overall: #3B82F6;
+  --cat-icu: #EF4444;
+  --cat-surgery: #F97316;
+  --cat-obstetrics: #EC4899;
+  --cat-emergency: #8B5CF6;
+  --cat-focus: #06B6D4;
+  --cat-infection: #10B981;
+  --cat-medication: #F59E0B;
+  --cat-respiratory: #6366F1;
+  --cat-management: #6B7280;
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: -apple-system, "Noto Sans TC", "Microsoft JhengHei", sans-serif;
 }
 
 @layer utilities {
