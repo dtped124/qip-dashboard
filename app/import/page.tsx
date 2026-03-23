@@ -2,9 +2,28 @@
 
 import { useEffect, useState } from 'react';
 import { Upload, Clock, FileSpreadsheet, AlertCircle } from 'lucide-react';
-import { getImportLogs } from '@/lib/db/operations';
 import { ImportWizard } from '@/components/import/ImportWizard';
 import type { ImportLog } from '@/lib/types';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
+
+async function getImportLogsFromAPI(): Promise<ImportLog[]> {
+  const res = await fetch(`${API_BASE}/api/v1/imports/logs/`);
+  const data = await res.json();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (data.data || []).map((log: Record<string, any>) => ({
+    id: log.id,
+    timestamp: new Date(log.created_at),
+    fileName: log.file_name,
+    fileSize: log.file_size,
+    sheetsProcessed: log.sheets_processed || [],
+    dataPointsNew: log.data_points_new,
+    dataPointsUpdated: log.data_points_updated,
+    dataPointsUnchanged: log.data_points_unchanged,
+    revisionsDetected: 0,
+    errors: log.errors || [],
+  }));
+}
 
 export default function ImportPage() {
   const [logs, setLogs] = useState<ImportLog[]>([]);
@@ -14,7 +33,7 @@ export default function ImportPage() {
   async function loadLogs() {
     setLoading(true);
     try {
-      const data = await getImportLogs();
+      const data = await getImportLogsFromAPI();
       setLogs(data);
     } finally {
       setLoading(false);

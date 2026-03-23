@@ -11,20 +11,30 @@ const MECHANISM_LABELS: Record<string, string> = {
   peer_comparison: '同儕比較',
 };
 
-function getLatestMechanisms(item: IndicatorData): string[] {
-  const validPoints = item.monthlyData
-    .filter(dp => dp.value !== null)
-    .sort((a, b) => (b.year * 12 + b.month) - (a.year * 12 + a.month));
-  const latest = validPoints[0];
-  if (!latest) return [];
+function getLatestAnomalyInfo(item: IndicatorData): { mechanisms: string[]; message: string } {
+  if (!item.anomalies || item.anomalies.length === 0) {
+    return { mechanisms: [], message: '' };
+  }
 
-  const unfavorable = item.anomalies.filter(a =>
-    a.direction === 'unfavorable' &&
-    a.year === latest.year &&
-    a.month === latest.month
-  );
+  // Use all anomalies from the dashboard API (already filtered to latest month)
+  const unfavorable = item.anomalies.filter(a => a.direction === 'unfavorable');
   const mechanisms = new Set(unfavorable.map(a => MECHANISM_LABELS[a.mechanism]).filter(Boolean));
-  return Array.from(mechanisms);
+
+  // Pick the most severe anomaly message
+  const priorityOrder = ['alert', 'warning', 'watch'];
+  let bestMessage = '';
+  for (const sev of priorityOrder) {
+    const match = unfavorable.find(a => a.severity === sev && a.message);
+    if (match) {
+      bestMessage = match.message;
+      break;
+    }
+  }
+  if (!bestMessage && unfavorable.length > 0) {
+    bestMessage = unfavorable[0].message || '';
+  }
+
+  return { mechanisms: Array.from(mechanisms), message: bestMessage };
 }
 
 interface Props {
@@ -72,7 +82,7 @@ export function AlertBanner({ indicators }: Props) {
 
             <div className="mt-1 text-sm text-red-700 space-y-1">
               {displayItems.map(item => {
-                const mechanisms = getLatestMechanisms(item);
+                const { mechanisms, message } = getLatestAnomalyInfo(item);
                 return (
                   <Link
                     key={`${item.meta.code}_${item.campus}`}
@@ -87,7 +97,10 @@ export function AlertBanner({ indicators }: Props) {
                         {mechanisms.join('・')}
                       </span>
                     )}
-                    <span className="text-xs text-red-400">({item.campus})</span>
+                    {message && (
+                      <span className="text-xs text-red-400 truncate max-w-[200px]">— {message}</span>
+                    )}
+                    <span className="text-xs text-red-400 shrink-0">({item.campus})</span>
                   </Link>
                 );
               })}

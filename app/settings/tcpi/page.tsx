@@ -5,9 +5,10 @@ import { useRouter } from 'next/navigation';
 import * as XLSX from 'xlsx';
 import { BarChart3, Upload, CheckCircle2, AlertTriangle, ArrowLeft, FileSpreadsheet } from 'lucide-react';
 import { parseTcpiExcel, isTcpiFormat } from '@/lib/tcpi-parser';
-import { db } from '@/lib/db/schema';
 import { INDICATOR_META } from '@/lib/constants';
-import type { TCPIBenchmark, TCPIBenchmarkRecord } from '@/lib/types';
+import type { TCPIBenchmark } from '@/lib/types';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
 
 export default function TcpiImportPage() {
   const router = useRouter();
@@ -55,22 +56,14 @@ export default function TcpiImportPage() {
   const handleConfirm = useCallback(async () => {
     setSaving(true);
     try {
-      // 清除舊的 TCPI 標竿
-      await db.tcpiBenchmarks.clear();
-
-      // 寫入新的
-      const records: TCPIBenchmarkRecord[] = benchmarks.map(b => ({
-        indicatorCode: b.indicatorCode,
-        tcpiName: b.tcpiName,
-        year: b.year,
-        medicalCenter: b.medicalCenter,
-        regionalHospital: b.regionalHospital,
-        districtHospital: b.districtHospital,
-        importedAt: new Date(),
-      }));
-
-      await db.tcpiBenchmarks.bulkAdd(records);
-      setSavedCount(records.length);
+      const res = await fetch(`${API_BASE}/api/v1/tcpi/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ benchmarks }),
+      });
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      const result = await res.json();
+      setSavedCount(result.saved);
       setStep('done');
     } catch (err) {
       setErrors(prev => [...prev, `儲存失敗: ${err instanceof Error ? err.message : String(err)}`]);

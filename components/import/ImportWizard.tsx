@@ -2,17 +2,11 @@
 
 import { useState, useCallback } from 'react';
 import { useDashboardStore } from '@/lib/store/dashboardStore';
-import { parseQIPExcel } from '@/lib/excel-parser';
-import { applyStatus } from '@/lib/status-engine';
-import { applyTrends } from '@/lib/trend-calculator';
-import { createImportLog, bulkUpsertDataPoints } from '@/lib/db/operations';
-import type { DataPointRecord } from '@/lib/types';
-import * as XLSX from 'xlsx';
+import { uploadExcel, loadDashboardFromAPI } from '@/lib/api';
 import {
   Upload, X, FileSpreadsheet, CheckCircle, AlertCircle,
   ArrowRight, ArrowLeft, FileCheck, FileDiff, Loader2,
 } from 'lucide-react';
-import type { IndicatorData } from '@/lib/types';
 
 interface Props {
   onClose: () => void;
@@ -20,59 +14,27 @@ interface Props {
 
 type Step = 'upload' | 'preview' | 'diff' | 'done';
 
-interface ParsedResult {
-  indicators: IndicatorData[];
-  errors: string[];
+interface UploadedFileInfo {
+  file: File;
   fileName: string;
   fileSize: number;
-  sheetsCount: number;
-  dateRange: string;
 }
 
 export function ImportWizard({ onClose }: Props) {
-  const setIndicators = useDashboardStore(s => s.setIndicators);
+  const store = useDashboardStore();
   const [step, setStep] = useState<Step>('upload');
   const [dragOver, setDragOver] = useState(false);
   const [parsing, setParsing] = useState(false);
-  const [parsed, setParsed] = useState<ParsedResult | null>(null);
+  const [fileInfo, setFileInfo] = useState<UploadedFileInfo | null>(null);
   const [importing, setImporting] = useState(false);
 
   const processFile = useCallback(async (file: File) => {
     setParsing(true);
     try {
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array' });
-
-      const { indicators, errors } = parseQIPExcel(workbook);
-
-      // 找出資料期間範圍
-      let minYear = Infinity, maxYear = -Infinity;
-      for (const ind of indicators) {
-        for (const dp of ind.monthlyData) {
-          if (dp.value !== null) {
-            if (dp.year < minYear) minYear = dp.year;
-            if (dp.year > maxYear) maxYear = dp.year;
-          }
-        }
-      }
-
-      setParsed({
-        indicators,
-        errors,
+      setFileInfo({
+        file,
         fileName: file.name,
         fileSize: file.size,
-        sheetsCount: workbook.SheetNames.length,
-        dateRange: minYear !== Infinity ? `民國 ${minYear} 年 - ${maxYear} 年` : '無數據',
-      });
-      setStep('preview');
-    } catch (err) {
-      setParsed({
-        indicators: [],
-        errors: [String(err)],
-        fileName: file.name,
-        fileSize: file.size,
-        sheetsCount: 0,
-        dateRange: '',
       });
       setStep('preview');
     } finally {
@@ -93,76 +55,37 @@ export function ImportWizard({ onClose }: Props) {
   }, [processFile]);
 
   const [importStats, setImportStats] = useState<{ inserted: number; updated: number; unchanged: number } | null>(null);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
 
   const confirmImport = useCallback(async () => {
-    if (!parsed) return;
+    if (!fileInfo) return;
     setImporting(true);
+    setImportErrors([]);
     try {
-      let processed = applyStatus(parsed.indicators);
-      processed = applyTrends(processed);
-
-      // 合併：保留其他院區/指標的現有資料，只更新本次匯入的部分
-      const existingIndicators = useDashboardStore.getState().indicators;
-      const importedKeys = new Set(
-        processed.map(i => `${i.meta.code}:${i.campus}`)
-      );
-      const kept = existingIndicators.filter(
-        i => !importedKeys.has(`${i.meta.code}:${i.campus}`)
-      );
-      setIndicators([...kept, ...processed]);
-
-      // 將數據點寫入 IndexedDB（含分子/分母供 P/U Chart 使用）
-      const dataPointRecords: DataPointRecord[] = [];
-      for (const ind of processed) {
-        for (const dp of ind.monthlyData) {
-          const record: DataPointRecord = {
-            indicatorCode: ind.meta.code,
-            campus: ind.campus,
-            year: dp.year,
-            month: dp.month,
-            value: dp.value,
-          };
-          if (dp.numerator !== undefined) record.numerator = dp.numerator;
-          if (dp.denominator !== undefined) record.denominator = dp.denominator;
-          dataPointRecords.push(record);
-        }
+      // Upload to Django API (server-side parsing + persistence + anomaly detection)
+      const result = await uploadExcel(fileInfo.file);
+      setImportStats({
+        inserted: result.new,
+        updated: result.updated,
+        unchanged: result.unchanged,
+      });
+      if (result.errors?.length > 0) {
+        setImportErrors(result.errors);
       }
 
-      const stats = await bulkUpsertDataPoints(dataPointRecords);
-      setImportStats(stats);
-
-      // 寫入匯入紀錄
-      await createImportLog({
-        timestamp: new Date(),
-        fileName: parsed.fileName,
-        fileSize: parsed.fileSize,
-        sheetsProcessed: [`${parsed.sheetsCount} 張工作表`],
-        dataPointsNew: stats.inserted,
-        dataPointsUpdated: stats.updated,
-        dataPointsUnchanged: stats.unchanged,
-        revisionsDetected: stats.updated,
-        errors: parsed.errors,
-      });
+      // Reload dashboard data from API
+      const loaded = await loadDashboardFromAPI(store.campus);
+      store.setIndicators(loaded);
 
       setStep('done');
-    } catch {
-      // handle error
+    } catch (err) {
+      setImportErrors([String(err)]);
     } finally {
       setImporting(false);
     }
-  }, [parsed, setIndicators]);
+  }, [fileInfo, store]);
 
-  // 統計解析結果
-  const campusCounts = parsed ? {
-    zhubei: parsed.indicators.filter(i => i.campus === '竹北').length,
-    zhudong: parsed.indicators.filter(i => i.campus === '竹東').length,
-    hsinchu: parsed.indicators.filter(i => i.campus === '新竹').length,
-  } : { zhubei: 0, zhudong: 0, hsinchu: 0 };
-
-  const totalDataPoints = parsed
-    ? parsed.indicators.reduce((sum, ind) =>
-      sum + ind.monthlyData.filter(dp => dp.value !== null).length, 0)
-    : 0;
+  const parsed = fileInfo; // Alias for template compatibility
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -229,63 +152,25 @@ export function ImportWizard({ onClose }: Props) {
           {/* Step 2: Preview */}
           {step === 'preview' && parsed && (
             <div className="space-y-4">
-              {/* 檔案資訊 */}
               <div className="flex items-center gap-3 bg-blue-50 rounded-lg p-4">
                 <FileCheck size={24} className="text-blue-500" />
                 <div>
                   <div className="font-medium text-gray-800">{parsed.fileName}</div>
                   <div className="text-xs text-gray-500">
-                    {(parsed.fileSize / 1024).toFixed(0)} KB | {parsed.sheetsCount} 張工作表
+                    {(parsed.fileSize / 1024).toFixed(0)} KB
                   </div>
                 </div>
               </div>
 
-              {/* 解析摘要 */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-gray-50 rounded-lg p-3">
-                  <div className="text-xs text-gray-500 mb-1">辨識指標數</div>
-                  <div className="text-xl font-bold text-gray-800">{parsed.indicators.length}</div>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-3">
-                  <div className="text-xs text-gray-500 mb-1">數據點數</div>
-                  <div className="text-xl font-bold text-gray-800">{totalDataPoints}</div>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-3">
-                  <div className="text-xs text-gray-500 mb-1">院區分布</div>
-                  <div className="text-sm text-gray-800">
-                    {[
-                      campusCounts.zhubei > 0 && `竹北 ${campusCounts.zhubei}`,
-                      campusCounts.zhudong > 0 && `竹東 ${campusCounts.zhudong}`,
-                      campusCounts.hsinchu > 0 && `新竹 ${campusCounts.hsinchu}`,
-                    ].filter(Boolean).join(' | ')}
-                  </div>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-3">
-                  <div className="text-xs text-gray-500 mb-1">資料期間</div>
-                  <div className="text-sm text-gray-800">{parsed.dateRange}</div>
-                </div>
+              <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-600">
+                <p>檔案將上傳至伺服器進行解析與匯入，包含：</p>
+                <ul className="mt-2 space-y-1 text-xs text-gray-500">
+                  <li>• 自動辨識工作表（竹北/竹東/新竹）</li>
+                  <li>• 解析指標代碼與月份數據</li>
+                  <li>• 提取分子/分母供管制圖使用</li>
+                  <li>• 執行三重異常偵測分析</li>
+                </ul>
               </div>
-
-              {/* 錯誤/警告 */}
-              {parsed.errors.length > 0 && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                  <div className="text-xs font-medium text-yellow-700 mb-1">
-                    {parsed.errors.length} 個警告
-                  </div>
-                  <div className="max-h-24 overflow-y-auto space-y-0.5">
-                    {parsed.errors.map((err, i) => (
-                      <div key={i} className="text-xs text-yellow-600">{err}</div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {parsed.indicators.length === 0 && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
-                  <AlertCircle size={32} className="mx-auto text-red-400 mb-2" />
-                  <div className="text-sm text-red-700">無法解析任何指標數據</div>
-                </div>
-              )}
             </div>
           )}
 
@@ -297,45 +182,28 @@ export function ImportWizard({ onClose }: Props) {
                 <div>
                   <div className="font-medium text-gray-800">準備匯入</div>
                   <div className="text-xs text-gray-500">
-                    將載入 {parsed.indicators.length} 項指標、{totalDataPoints} 個數據點
+                    {parsed.fileName} ({(parsed.fileSize / 1024).toFixed(0)} KB)
                   </div>
                 </div>
               </div>
 
-              <div className="bg-gray-50 rounded-lg p-4">
-                <div className="text-sm text-gray-600 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span>指標數</span>
-                    <span className="font-medium">{parsed.indicators.length} 項</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>數據點</span>
-                    <span className="font-medium">{totalDataPoints} 筆</span>
-                  </div>
-                  {campusCounts.zhubei > 0 && (
-                    <div className="flex items-center justify-between">
-                      <span>竹北院區</span>
-                      <span className="font-medium">{campusCounts.zhubei} 項指標</span>
-                    </div>
-                  )}
-                  {campusCounts.zhudong > 0 && (
-                    <div className="flex items-center justify-between">
-                      <span>竹東院區</span>
-                      <span className="font-medium">{campusCounts.zhudong} 項指標</span>
-                    </div>
-                  )}
-                  {campusCounts.hsinchu > 0 && (
-                    <div className="flex items-center justify-between">
-                      <span>新竹院區</span>
-                      <span className="font-medium">{campusCounts.hsinchu} 項指標</span>
-                    </div>
-                  )}
-                </div>
+              <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-600">
+                <p>點擊「確認匯入」後，系統將：</p>
+                <ol className="mt-2 space-y-1 text-xs text-gray-500 list-decimal ml-4">
+                  <li>上傳檔案至伺服器解析</li>
+                  <li>比對現有資料（新增/更新/未變更）</li>
+                  <li>執行三重異常偵測（管制圖+月增減+同儕比較）</li>
+                  <li>自動重新整理儀表板</li>
+                </ol>
               </div>
 
-              <p className="text-xs text-gray-400 text-center">
-                匯入後將自動執行三重異常偵測分析
-              </p>
+              {importErrors.length > 0 && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                  {importErrors.map((e, i) => (
+                    <p key={i} className="text-xs text-red-600">{e}</p>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -345,9 +213,6 @@ export function ImportWizard({ onClose }: Props) {
               <CheckCircle size={48} className="mx-auto text-green-500" />
               <div>
                 <p className="text-lg font-medium text-gray-800">匯入成功</p>
-                <p className="text-sm text-gray-500">
-                  共載入 {parsed?.indicators.length} 項指標、{totalDataPoints} 個數據點
-                </p>
                 {importStats && (
                   <div className="flex items-center justify-center gap-4 mt-2 text-xs">
                     {importStats.inserted > 0 && (
@@ -361,8 +226,18 @@ export function ImportWizard({ onClose }: Props) {
                     )}
                   </div>
                 )}
+                {importErrors.length > 0 && (
+                  <div className="mt-3 text-left bg-yellow-50 rounded-lg p-3 max-h-32 overflow-y-auto">
+                    {importErrors.slice(0, 5).map((e, i) => (
+                      <p key={i} className="text-xs text-yellow-600">{e}</p>
+                    ))}
+                    {importErrors.length > 5 && (
+                      <p className="text-xs text-yellow-400">...還有 {importErrors.length - 5} 個警告</p>
+                    )}
+                  </div>
+                )}
                 <p className="text-xs text-gray-400 mt-1">
-                  已完成異常偵測分析
+                  已完成異常偵測分析，儀表板已自動更新
                 </p>
               </div>
             </div>
@@ -382,7 +257,7 @@ export function ImportWizard({ onClose }: Props) {
             )}
           </div>
           <div>
-            {step === 'preview' && parsed && parsed.indicators.length > 0 && (
+            {step === 'preview' && parsed && (
               <button
                 onClick={() => setStep('diff')}
                 className="flex items-center gap-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"

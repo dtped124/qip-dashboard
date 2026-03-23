@@ -1,0 +1,35 @@
+# QIP 監測指標系統 — 正式環境
+services:
+  web:
+    image: qm-center/qip-dashboard:0.5.0
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.prod
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_SCHEMA: qip
+      REDIS_URL: ${REDIS_URL}
+    ports:
+      - "8001:8000"
+    restart: unless-stopped
+
+  streamlit:
+    image: qm-center/qip-dashboard:0.5.0
+    command: streamlit run dashboard/app.py --server.port 8501 --server.address 0.0.0.0
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.prod
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_SCHEMA: qip
+      REDIS_URL: ${REDIS_URL}
+    ports:
+      - "8501:8501"
+    restart: unless-stopped

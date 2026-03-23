@@ -5,6 +5,7 @@ import Link from 'next/link';
 import type { IndicatorData, IndicatorStatus, Campus } from '@/lib/types';
 import { STATUS_CONFIG, CATEGORY_COLORS, CATEGORY_ORDER, INDICATOR_META, QUARTERLY_MONTHS, monthToQuarter } from '@/lib/constants';
 import { computeMonthStatus } from '@/lib/engine/anomalyDetector';
+import { useDashboardStore } from '@/lib/store/dashboardStore';
 
 interface Props {
   indicators: IndicatorData[];
@@ -29,8 +30,15 @@ export function StatusMatrix({ indicators, year }: Props) {
     return '竹北';
   }, [indicators]);
 
+  const statusFilter = useDashboardStore(s => s.statusFilter);
+
   // 合併：已有資料的指標 + INDICATOR_META 中該院區定義但無資料的指標
+  // 當有 statusFilter 時不加佔位（避免良好/neutral 指標被加回來）
   const allIndicators = useMemo(() => {
+    if (statusFilter === 'alert') {
+      return indicators; // Already filtered, don't add placeholders
+    }
+
     const existingKeys = new Set(indicators.map(ind => `${ind.meta.code}_${ind.campus}`));
     const placeholders: IndicatorData[] = [];
 
@@ -39,7 +47,6 @@ export function StatusMatrix({ indicators, year }: Props) {
       const key = `${code}_${campus}`;
       if (existingKeys.has(key)) continue;
 
-      // 建立空的佔位指標
       placeholders.push({
         meta: { code, ...meta },
         campus,
@@ -58,7 +65,7 @@ export function StatusMatrix({ indicators, year }: Props) {
     }
 
     return [...indicators, ...placeholders];
-  }, [indicators, campus]);
+  }, [indicators, campus, statusFilter]);
 
   // 按類別分組
   const grouped = useMemo(() => {
@@ -196,7 +203,11 @@ export function StatusMatrix({ indicators, year }: Props) {
                         </Link>
                       </td>
                       {months.map(m => {
-                        const status = monthStatuses?.get(m) ?? 'neutral';
+                        let status = monthStatuses?.get(m) ?? 'neutral';
+                        // 篩選模式下，良好/卓越月份改為灰色，只突出異常月份
+                        if (statusFilter === 'alert' && (status === 'good' || status === 'excellent')) {
+                          status = 'neutral';
+                        }
                         // 季指標：非季月（1,4,7,10）不顯示色塊
                         if (ind.meta.isQuarterly && !(QUARTERLY_MONTHS as readonly number[]).includes(m)) {
                           return (

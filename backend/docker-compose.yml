@@ -1,0 +1,69 @@
+# QIP 監測指標系統 — 本機開發環境
+services:
+  postgres:
+    image: postgres:16-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      POSTGRES_DB: qm_center
+      POSTGRES_USER: ${DB_USER:-qm_admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-devpassword}
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+
+  web:
+    build: .
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+    ports:
+      - "8001:8000"
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      DJANGO_SECRET_KEY: dev-secret-key-change-in-production
+      DJANGO_DEBUG: "True"
+      DB_NAME: qm_center
+      DB_USER: ${DB_USER:-qm_admin}
+      DB_PASSWORD: ${DB_PASSWORD:-devpassword}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_SCHEMA: qip
+      REDIS_URL: redis://redis:6379/1
+      CELERY_BROKER_URL: redis://redis:6379/2
+      CELERY_RESULT_BACKEND: redis://redis:6379/3
+
+  streamlit:
+    build: .
+    command: streamlit run dashboard/app.py --server.port 8501 --server.address 0.0.0.0
+    volumes:
+      - .:/app
+    ports:
+      - "8501:8501"
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      DJANGO_SECRET_KEY: dev-secret-key-change-in-production
+      DB_NAME: qm_center
+      DB_USER: ${DB_USER:-qm_admin}
+      DB_PASSWORD: ${DB_PASSWORD:-devpassword}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_SCHEMA: qip
+      REDIS_URL: redis://redis:6379/1
+
+volumes:
+  postgres_data:
+  redis_data:

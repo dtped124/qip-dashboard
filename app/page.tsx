@@ -12,11 +12,7 @@ import { AlertBanner } from '@/components/layout/AlertBanner';
 import { IndicatorCard } from '@/components/dashboard/IndicatorCard';
 import { StatusMatrix } from '@/components/dashboard/StatusMatrix';
 import { FileSpreadsheet, Database, Loader2 } from 'lucide-react';
-import { parseQIPExcel } from '@/lib/excel-parser';
-import { applyStatus } from '@/lib/status-engine';
-import { applyTrends } from '@/lib/trend-calculator';
-import { loadIndicatorsFromDB } from '@/lib/db/loader';
-import * as XLSX from 'xlsx';
+import { loadDashboardFromAPI, uploadExcel } from '@/lib/api';
 
 export default function HomePage() {
   const store = useDashboardStore();
@@ -24,37 +20,40 @@ export default function HomePage() {
   const [loadingSample, setLoadingSample] = useState(false);
   const [initializing, setInitializing] = useState(true);
 
-  // 啟動時從 IndexedDB 載入資料（頁面重整後還原）
+  // 從 Django API 載入資料（啟動時 + 切換院區時）
   useEffect(() => {
-    if (store.indicators.length > 0) {
-      setInitializing(false);
-      return;
-    }
-    loadIndicatorsFromDB()
+    let cancelled = false;
+    setInitializing(true);
+    loadDashboardFromAPI(store.campus)
       .then(loaded => {
-        if (loaded.length > 0) {
+        if (!cancelled && loaded.length > 0) {
           store.setIndicators(loaded);
         }
       })
       .catch(err => {
-        console.error('Failed to load from IndexedDB:', err);
+        if (!cancelled) {
+          console.error('Failed to load from API:', err);
+          store.setError(String(err));
+        }
       })
       .finally(() => {
-        setInitializing(false);
+        if (!cancelled) setInitializing(false);
       });
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [store.campus]);
 
   const loadSampleData = useCallback(async () => {
     setLoadingSample(true);
     try {
+      // Upload sample.xls to Django API, then reload dashboard
       const resp = await fetch('/sample.xls');
-      const buffer = await resp.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array' });
-      const { indicators: parsed } = parseQIPExcel(workbook);
-      let processed = applyStatus(parsed);
-      processed = applyTrends(processed);
-      store.setIndicators(processed);
+      const blob = await resp.blob();
+      const file = new File([blob], 'sample.xls', { type: blob.type });
+      await uploadExcel(file);
+      // Reload dashboard from API
+      const loaded = await loadDashboardFromAPI(store.campus);
+      store.setIndicators(loaded);
     } catch (err) {
       store.setError(String(err));
     } finally {
@@ -68,6 +67,25 @@ export default function HomePage() {
       <div className="flex flex-col items-center justify-center h-full text-center">
         <Loader2 size={48} className="text-blue-400 animate-spin mb-4" />
         <p className="text-sm text-gray-500">載入資料中...</p>
+        <p className="text-xs text-gray-400 mt-2">連線 Django API ({process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'})</p>
+      </div>
+    );
+  }
+
+  // API 錯誤
+  if (store.error && store.indicators.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center">
+        <div className="text-red-500 text-4xl mb-4">⚠</div>
+        <h2 className="text-xl font-bold text-gray-800 mb-2">無法連線後端</h2>
+        <p className="text-sm text-red-500 mb-4 max-w-md">{store.error}</p>
+        <p className="text-xs text-gray-400 mb-4">請確認 Docker 容器正在運行：docker-compose up -d</p>
+        <button
+          onClick={() => { store.setError(null); setInitializing(true); loadDashboardFromAPI(store.campus).then(d => { store.setIndicators(d); }).catch(e => store.setError(String(e))).finally(() => setInitializing(false)); }}
+          className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm hover:bg-blue-600"
+        >
+          重試連線
+        </button>
       </div>
     );
   }

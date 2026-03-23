@@ -2,8 +2,10 @@
 
 import { useDashboardStore } from '@/lib/store/dashboardStore';
 import { useParams } from 'next/navigation';
-import { useState } from 'react';
-import { CATEGORY_COLORS, STATUS_CONFIG, formatValue } from '@/lib/constants';
+import { useState, useEffect } from 'react';
+import { CATEGORY_COLORS, STATUS_CONFIG, formatValue, INDICATOR_META } from '@/lib/constants';
+import { loadIndicatorData, loadIndicatorSummaries, loadAnalysis } from '@/lib/api';
+import type { MonthlyDataPoint, YearlySummary, ControlChartParams, AnomalyResult as AnomalyResultType, IndicatorStatus } from '@/lib/types';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
 import { TrendArrow } from '@/components/dashboard/TrendArrow';
 import { ControlChart } from '@/components/charts/ControlChart';
@@ -20,26 +22,78 @@ export default function IndicatorDetailPage() {
   const params = useParams();
   const code = params.code as string;
 
-  const indicator = indicators.find(
+  // Find basic indicator info from store (dashboard data)
+  const storeIndicator = indicators.find(
     i => i.meta.code === code && i.campus === campus
   );
 
-  if (!indicator) {
+  // Load full detail data from API
+  const [detailData, setDetailData] = useState<{
+    monthlyData: MonthlyDataPoint[];
+    summaries: YearlySummary[];
+    analysis: { status: string; anomalies: AnomalyResultType[]; controlChart: ControlChartParams | null; peerValue: number | null } | null;
+  } | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(true);
+
+  useEffect(() => {
+    if (!code || !campus) return;
+    setLoadingDetail(true);
+    Promise.all([
+      loadIndicatorData(code, campus),
+      loadIndicatorSummaries(code, campus),
+      loadAnalysis(code, campus),
+    ])
+      .then(([monthly, summaryResult, analysis]) => {
+        setDetailData({
+          monthlyData: monthly,
+          summaries: summaryResult.summaries,
+          analysis,
+        });
+      })
+      .catch(err => {
+        console.error('Failed to load detail:', err);
+      })
+      .finally(() => setLoadingDetail(false));
+  }, [code, campus]);
+
+  // Build indicator from API data or store
+  const meta = storeIndicator?.meta || (() => {
+    const m = INDICATOR_META[code];
+    if (!m) return null;
+    return { code, ...m, source: 'preset' as const, isActive: true, isReverse: m.direction === 'lower' };
+  })();
+
+  if (!meta) {
     return (
       <div className="text-center py-20">
-        <p className="text-gray-500 mb-4">
-          {indicators.length === 0
-            ? '請先匯入 Excel 資料'
-            : `找不到指標 ${code}（${campus}院區）`}
-        </p>
-        <Link href="/" className="text-blue-600 hover:underline text-sm">
-          返回首頁
-        </Link>
+        <p className="text-gray-500 mb-4">找不到指標 {code}</p>
+        <Link href="/" className="text-blue-600 hover:underline text-sm">返回首頁</Link>
       </div>
     );
   }
 
-  const { meta, monthlyData, yearlySummaries, latestValue, latestMonth, status, trend, benchmarkValue, controlChart, anomalies, peerValue, peerYear } = indicator;
+  if (loadingDetail) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-gray-400">載入指標詳情中...</div>
+      </div>
+    );
+  }
+
+  const monthlyData = detailData?.monthlyData || storeIndicator?.monthlyData || [];
+  const yearlySummaries = detailData?.summaries || storeIndicator?.yearlySummaries || [];
+  const controlChart = detailData?.analysis?.controlChart || storeIndicator?.controlChart || null;
+  const anomalies = detailData?.analysis?.anomalies || storeIndicator?.anomalies || [];
+  const status = (detailData?.analysis?.status || storeIndicator?.status || 'neutral') as IndicatorStatus;
+  const trend = storeIndicator?.trend || 'flat';
+  const peerValue = detailData?.analysis?.peerValue ?? storeIndicator?.peerValue ?? null;
+  const peerYear = storeIndicator?.peerYear ?? null;
+  const benchmarkValue = storeIndicator?.benchmarkValue ?? null;
+
+  // Compute latest value from full monthly data
+  const validMonthly = monthlyData.filter(d => d.value !== null).sort((a, b) => a.year !== b.year ? b.year - a.year : b.month - a.month);
+  const latestValue = validMonthly[0]?.value ?? storeIndicator?.latestValue ?? null;
+  const latestMonth = validMonthly[0] ? `${validMonthly[0].year}.${String(validMonthly[0].month).padStart(2, '0')}` : storeIndicator?.latestMonth ?? null;
   const color = CATEGORY_COLORS[meta.category];
   const directionLabel = meta.direction === 'lower' ? '越低越好 ↓' : meta.direction === 'higher' ? '越高越好 ↑' : '持續監測 →';
 

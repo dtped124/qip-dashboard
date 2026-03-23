@@ -1,8 +1,9 @@
 'use client';
 
+import { useState } from 'react';
 import {
   ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceLine, ReferenceArea, Legend, Brush,
+  ReferenceLine, ReferenceArea, Legend,
 } from 'recharts';
 import type { ControlChartParams, AnomalyResult, MonthlyDataPoint, Direction, VariableLimit } from '@/lib/types';
 import { formatValue, monthToQuarter } from '@/lib/constants';
@@ -75,13 +76,12 @@ export function ControlChart({ dataPoints, controlChart, anomalies, direction, u
     };
   });
 
-  // Brush 範圍：初始鎖定最後 24 個點
+  // 預設顯示最後 24 個月，可切換顯示全部
   const VISIBLE_WINDOW = 24;
   const totalPoints = chartData.length;
-  const needsBrush = totalPoints > VISIBLE_WINDOW;
-
-  // key 變化時 Brush 會重新掛載，自動套用 startIndex/endIndex
-  const brushKey = `${chartData[0]?.label}_${chartData[chartData.length - 1]?.label}_${totalPoints}`;
+  const canExpand = totalPoints > VISIBLE_WINDOW;
+  const [showAll, setShowAll] = useState(false);
+  const displayData = (canExpand && !showAll) ? chartData.slice(-VISIBLE_WINDOW) : chartData;
 
   // Y 軸範圍
   const allValues = sorted.map(dp => dp.value as number);
@@ -168,11 +168,21 @@ export function ControlChart({ dataPoints, controlChart, anomalies, direction, u
         <div className="text-xs text-gray-500">
           {chartLabel} | {statsLabel}
         </div>
-        <div className="text-xs text-gray-400">{directionLabel}</div>
+        <div className="flex items-center gap-3">
+          {canExpand && (
+            <button
+              onClick={() => setShowAll(!showAll)}
+              className="text-xs text-blue-500 hover:text-blue-700 font-medium"
+            >
+              {showAll ? `最近 ${VISIBLE_WINDOW} 個月` : `顯示全部 ${totalPoints} 個月`}
+            </button>
+          )}
+          <div className="text-xs text-gray-400">{directionLabel}</div>
+        </div>
       </div>
 
       <ResponsiveContainer width="100%" height={360}>
-        <ComposedChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
+        <ComposedChart data={displayData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
 
           {/* 背景色帶 — 僅 I-MR（固定限）*/}
@@ -333,18 +343,7 @@ export function ControlChart({ dataPoints, controlChart, anomalies, direction, u
             connectNulls
           />
 
-          {needsBrush && (
-            <Brush
-              key={brushKey}
-              dataKey="label"
-              height={20}
-              stroke="#9CA3AF"
-              fill="#F9FAFB"
-              travellerWidth={8}
-              startIndex={Math.max(0, totalPoints - VISIBLE_WINDOW)}
-              endIndex={totalPoints - 1}
-            />
-          )}
+          {/* Brush removed — using slice-based windowing instead */}
 
           <Legend wrapperStyle={{ fontSize: 11 }} />
         </ComposedChart>
