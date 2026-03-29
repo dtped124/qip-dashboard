@@ -4,6 +4,7 @@ import { create } from 'zustand';
 import type { Campus, Category, IndicatorData, ViewMode } from '../types';
 
 export type StatusFilter = 'all' | 'alert';
+export type PeriodMode = 'monthly' | 'quarterly';
 
 interface DashboardStore {
   // UI 狀態
@@ -13,6 +14,7 @@ interface DashboardStore {
   selectedCategory: Category | 'all';
   selectedYear: number;
   statusFilter: StatusFilter;
+  periodMode: PeriodMode;
   loading: boolean;
   error: string | null;
 
@@ -26,6 +28,7 @@ interface DashboardStore {
   setSelectedCategory: (category: Category | 'all') => void;
   setSelectedYear: (year: number) => void;
   setStatusFilter: (filter: StatusFilter) => void;
+  setPeriodMode: (mode: PeriodMode) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   setIndicators: (indicators: IndicatorData[]) => void;
@@ -38,6 +41,7 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
   selectedCategory: 'all',
   selectedYear: 115,
   statusFilter: 'all',
+  periodMode: 'monthly',
   loading: false,
   error: null,
   indicators: [],
@@ -64,6 +68,7 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
   setSelectedCategory: (category) => set({ selectedCategory: category }),
   setSelectedYear: (year) => set({ selectedYear: year }),
   setStatusFilter: (filter) => set({ statusFilter: filter }),
+  setPeriodMode: (mode) => set({ periodMode: mode }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error, loading: false }),
   setIndicators: (indicators) => set((state) => {

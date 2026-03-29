@@ -2,7 +2,7 @@
 
 import { useDashboardStore } from '@/lib/store/dashboardStore';
 import { useParams } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { CATEGORY_COLORS, STATUS_CONFIG, formatValue, INDICATOR_META } from '@/lib/constants';
 import { loadIndicatorData, loadIndicatorSummaries, loadAnalysis } from '@/lib/api';
 import type { MonthlyDataPoint, YearlySummary, ControlChartParams, AnomalyResult as AnomalyResultType, IndicatorStatus } from '@/lib/types';
@@ -13,12 +13,17 @@ import { YearOverlayChart } from '@/components/charts/YearOverlayChart';
 import { YearCompareBar } from '@/components/charts/YearCompareBar';
 import { BenchmarkBar } from '@/components/charts/BenchmarkBar';
 import { DataTable } from '@/components/detail/DataTable';
+import { PeriodToggle } from '@/components/dashboard/PeriodToggle';
+import { aggregateToQuarterly } from '@/lib/aggregation';
 import { ArrowLeft, AlertTriangle, TrendingUp, Users, ChevronDown, ChevronUp } from 'lucide-react';
+import { AIAnalysisPanel } from '@/components/ai/AIAnalysisPanel';
+import type { PromptInput } from '@/lib/ai/promptBuilder';
 import Link from 'next/link';
 
 export default function IndicatorDetailPage() {
   const indicators = useDashboardStore(s => s.indicators);
   const campus = useDashboardStore(s => s.campus);
+  const periodMode = useDashboardStore(s => s.periodMode);
   const params = useParams();
   const code = params.code as string;
 
@@ -32,6 +37,9 @@ export default function IndicatorDetailPage() {
     monthlyData: MonthlyDataPoint[];
     summaries: YearlySummary[];
     analysis: { status: string; anomalies: AnomalyResultType[]; controlChart: ControlChartParams | null; peerValue: number | null } | null;
+  } | null>(null);
+  const [quarterlyAnalysis, setQuarterlyAnalysis] = useState<{
+    status: string; anomalies: AnomalyResultType[]; controlChart: ControlChartParams | null; peerValue: number | null;
   } | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(true);
 
@@ -56,12 +64,37 @@ export default function IndicatorDetailPage() {
       .finally(() => setLoadingDetail(false));
   }, [code, campus]);
 
+  // 季度模式：額外載入季度分析（管制圖 + 異常偵測）
+  useEffect(() => {
+    if (!code || !campus || periodMode !== 'quarterly') {
+      setQuarterlyAnalysis(null);
+      return;
+    }
+    loadAnalysis(code, campus, 'quarterly')
+      .then(setQuarterlyAnalysis)
+      .catch(err => console.error('Failed to load quarterly analysis:', err));
+  }, [code, campus, periodMode]);
+
   // Build indicator from API data or store
   const meta = storeIndicator?.meta || (() => {
     const m = INDICATOR_META[code];
     if (!m) return null;
     return { code, ...m, source: 'preset' as const, isActive: true, isReverse: m.direction === 'lower' };
   })();
+
+  // 判斷是否使用季度檢視（原生季報指標不受切換影響）
+  const isNativeQuarterly = meta?.isQuarterly ?? false;
+  const useQuarterlyView = periodMode === 'quarterly' && !isNativeQuarterly;
+  const effectiveIsQuarterly = isNativeQuarterly || useQuarterlyView;
+
+  const rawMonthlyData = detailData?.monthlyData || storeIndicator?.monthlyData || [];
+  const dataNature = meta?.dataNature ?? 'continuous';
+  const unit = meta?.unit ?? 'percent';
+  const monthlyData = useMemo(
+    () => useQuarterlyView ? aggregateToQuarterly(rawMonthlyData, dataNature, unit) : rawMonthlyData,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rawMonthlyData.length, useQuarterlyView, dataNature, unit],
+  );
 
   if (!meta) {
     return (
@@ -80,13 +113,15 @@ export default function IndicatorDetailPage() {
     );
   }
 
-  const monthlyData = detailData?.monthlyData || storeIndicator?.monthlyData || [];
   const yearlySummaries = detailData?.summaries || storeIndicator?.yearlySummaries || [];
-  const controlChart = detailData?.analysis?.controlChart || storeIndicator?.controlChart || null;
-  const anomalies = detailData?.analysis?.anomalies || storeIndicator?.anomalies || [];
-  const status = (detailData?.analysis?.status || storeIndicator?.status || 'neutral') as IndicatorStatus;
+
+  // 季度模式使用季度分析結果，月度模式使用原始分析結果
+  const activeAnalysis = useQuarterlyView && quarterlyAnalysis ? quarterlyAnalysis : detailData?.analysis;
+  const controlChart = activeAnalysis?.controlChart || storeIndicator?.controlChart || null;
+  const anomalies = activeAnalysis?.anomalies || storeIndicator?.anomalies || [];
+  const status = (activeAnalysis?.status || storeIndicator?.status || 'neutral') as IndicatorStatus;
   const trend = storeIndicator?.trend || 'flat';
-  const peerValue = detailData?.analysis?.peerValue ?? storeIndicator?.peerValue ?? null;
+  const peerValue = activeAnalysis?.peerValue ?? storeIndicator?.peerValue ?? null;
   const peerYear = storeIndicator?.peerYear ?? null;
   const benchmarkValue = storeIndicator?.benchmarkValue ?? null;
 
@@ -127,6 +162,7 @@ export default function IndicatorDetailPage() {
               <span className="text-sm text-gray-500">{meta.category}</span>
               <span className="font-mono text-sm text-gray-400">{meta.code}</span>
               <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded">{directionLabel}</span>
+              {!isNativeQuarterly && <PeriodToggle />}
             </div>
             <h1 className="text-2xl font-bold text-gray-900">{meta.name}</h1>
           </div>
@@ -160,7 +196,7 @@ export default function IndicatorDetailPage() {
 
       {/* 異常事件摘要 */}
       {uniqueAnomalies.size > 0 && (
-        <AnomalyPanel anomalies={Array.from(uniqueAnomalies.values())} isQuarterly={meta.isQuarterly} />
+        <AnomalyPanel anomalies={Array.from(uniqueAnomalies.values())} isQuarterly={effectiveIsQuarterly} />
       )}
 
       {/* 管制圖 */}
@@ -181,7 +217,7 @@ export default function IndicatorDetailPage() {
             direction={meta.direction}
             unit={meta.unit}
             peerValue={peerValue}
-            isQuarterly={meta.isQuarterly}
+            isQuarterly={effectiveIsQuarterly}
           />
         </div>
       )}
@@ -196,7 +232,7 @@ export default function IndicatorDetailPage() {
             yearlySummaries={yearlySummaries}
             unit={meta.unit}
             benchmarkValue={primaryBenchmark}
-            isQuarterly={meta.isQuarterly}
+            isQuarterly={effectiveIsQuarterly}
           />
         </div>
 
@@ -221,10 +257,30 @@ export default function IndicatorDetailPage() {
       </div>
 
       {/* 完整數據表 */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-6">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-6 mb-6">
         <h2 className="text-base font-bold text-gray-800 mb-4">完整數據</h2>
-        <DataTable monthlyData={monthlyData} unit={meta.unit} isQuarterly={meta.isQuarterly} />
+        <DataTable monthlyData={monthlyData} unit={meta.unit} isQuarterly={effectiveIsQuarterly} />
       </div>
+
+      {/* AI 深度分析 */}
+      <AIAnalysisPanel
+        promptInput={{
+          meta,
+          campus,
+          latestValue,
+          latestMonth,
+          status,
+          trend,
+          peerValue,
+          peerYear,
+          benchmarkValue,
+          controlChart,
+          anomalies,
+          monthlyData: rawMonthlyData,
+          yearlySummaries,
+        } satisfies PromptInput}
+        cacheKey={`${meta.code}_${campus}_${latestMonth ?? 'nodate'}`}
+      />
     </div>
   );
 }

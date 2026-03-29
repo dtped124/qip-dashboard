@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Settings, ListChecks, Database, Trash2, BarChart3 } from 'lucide-react';
+import { Settings, ListChecks, Database, Trash2, BarChart3, Bot } from 'lucide-react';
 import { useState } from 'react';
 import { clearAllData } from '@/lib/db/operations';
 
@@ -53,6 +53,20 @@ export default function SettingsPage() {
           <div>
             <h2 className="text-lg font-semibold text-gray-800">TCPI 標竿管理</h2>
             <p className="text-sm text-gray-500">匯入醫策會 TCPI 年值報表，設定同儕標竿值</p>
+          </div>
+        </Link>
+
+        {/* AI 深度分析 */}
+        <Link
+          href="/settings/ai"
+          className="flex items-center gap-4 bg-white rounded-lg shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow"
+        >
+          <div className="p-3 bg-purple-50 rounded-lg">
+            <Bot size={24} className="text-purple-600" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-gray-800">AI 深度分析</h2>
+            <p className="text-sm text-gray-500">設定 Claude API Key、選擇模型、查看用量統計</p>
           </div>
         </Link>
 

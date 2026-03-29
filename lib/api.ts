@@ -250,14 +250,15 @@ interface AnalysisResponse {
 /**
  * 從 Django API 取得即時分析結果（管制圖 + 異常偵測）
  */
-export async function loadAnalysis(code: string, campus: Campus): Promise<{
+export async function loadAnalysis(code: string, campus: Campus, period?: 'monthly' | 'quarterly'): Promise<{
   status: IndicatorStatus;
   anomalies: AnomalyResult[];
   controlChart: ControlChartParams | null;
   peerValue: number | null;
 }> {
+  const periodParam = period === 'quarterly' ? '&period=quarterly' : '';
   const resp = await apiFetch<AnalysisResponse>(
-    `/api/v1/indicators/${code}/analysis/?campus=${encodeURIComponent(campus)}`
+    `/api/v1/indicators/${code}/analysis/?campus=${encodeURIComponent(campus)}${periodParam}`
   );
 
   const anomalies: AnomalyResult[] = resp.anomalies.map(a => ({

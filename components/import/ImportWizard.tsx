@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react';
 import { useDashboardStore } from '@/lib/store/dashboardStore';
 import { uploadExcel, loadDashboardFromAPI } from '@/lib/api';
 import {
-  Upload, X, FileSpreadsheet, CheckCircle, AlertCircle,
+  Upload, X, FileSpreadsheet, CheckCircle,
   ArrowRight, ArrowLeft, FileCheck, FileDiff, Loader2,
 } from 'lucide-react';
 

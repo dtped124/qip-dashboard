@@ -8,6 +8,7 @@ import { OverviewStats } from '@/components/dashboard/OverviewStats';
 import { CategorySection } from '@/components/dashboard/CategorySection';
 import { TableView } from '@/components/dashboard/TableView';
 import { ViewToggle } from '@/components/dashboard/ViewToggle';
+import { PeriodToggle } from '@/components/dashboard/PeriodToggle';
 import { AlertBanner } from '@/components/layout/AlertBanner';
 import { IndicatorCard } from '@/components/dashboard/IndicatorCard';
 import { StatusMatrix } from '@/components/dashboard/StatusMatrix';
@@ -131,7 +132,10 @@ export default function HomePage() {
             {store.viewMode !== 'heatmap' && `${indicators.length} 項`}
           </span>
         </h2>
-        <ViewToggle />
+        <div className="flex items-center gap-3">
+          {store.viewMode === 'heatmap' && <PeriodToggle />}
+          <ViewToggle />
+        </div>
       </div>
 
       {/* 指標列表 / 熱力圖 */}

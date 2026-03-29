@@ -25,6 +25,7 @@ from apps.analysis.services.control_chart import (
     MonthlyDataPoint, select_chart_type, compute_control_chart_params,
 )
 from apps.analysis.services.anomaly_detector import analyze_indicator
+from apps.analysis.services.aggregation import aggregate_to_quarterly
 
 
 @api_view(["GET"])
@@ -114,10 +115,12 @@ def indicator_summaries(request, code: str):
 
 @api_view(["GET"])
 def indicator_analysis(request, code: str):
-    """GET /api/v1/indicators/<code>/analysis/?campus=竹北 — 即時分析"""
+    """GET /api/v1/indicators/<code>/analysis/?campus=竹北&period=monthly — 即時分析"""
     campus = request.GET.get("campus", "")
     if not campus:
         return Response({"error": {"code": "BAD_REQUEST", "message": "必須指定 campus"}}, status=400)
+
+    period = request.GET.get("period", "monthly")
 
     try:
         ind = Indicator.objects.get(code=code)
@@ -138,7 +141,11 @@ def indicator_analysis(request, code: str):
     ]
 
     if not monthly_data:
-        return Response({"status": "neutral", "anomalies": [], "control_chart": None})
+        return Response({"status": "neutral", "anomalies": [], "control_chart": None, "peer_value": None})
+
+    # 季度模式：先彙總月資料再分析
+    if period == "quarterly" and not ind.is_quarterly:
+        monthly_data = aggregate_to_quarterly(monthly_data, ind.data_nature, ind.unit)
 
     # Get peer value
     peer_value = _get_peer_value(code, campus)
