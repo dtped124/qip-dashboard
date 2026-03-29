@@ -2,7 +2,10 @@
 
 import { ChevronDown, ChevronUp, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useDashboardStore } from '@/lib/store/dashboardStore';
 import type { ParsedCampusAnalysis } from '@/lib/ai/promptBuilder';
+import type { Campus } from '@/lib/types';
 
 export type PanelStatus = 'pending' | 'loading' | 'done' | 'error';
 
@@ -23,6 +26,15 @@ const URGENCY_LABEL = { high: '高', medium: '中', low: '低' };
 
 export function CampusAIPanel({ campus, status, result, rawText, error }: Props) {
   const [expanded, setExpanded] = useState(true);
+  const router = useRouter();
+  const setCampus = useDashboardStore(s => s.setCampus);
+  const setPeriodMode = useDashboardStore(s => s.setPeriodMode);
+
+  function handleConcernClick(code: string) {
+    setCampus(campus as Campus);
+    setPeriodMode('quarterly');
+    router.push(`/indicators/${code}`);
+  }
 
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -99,13 +111,14 @@ export function CampusAIPanel({ campus, status, result, rawText, error }: Props)
               <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">重點關注（{result.key_concerns.length} 項）</h4>
               <div className="space-y-2">
                 {result.key_concerns.map((concern, i) => (
-                  <div
+                  <button
                     key={i}
-                    className={`p-3 rounded-lg border text-sm ${URGENCY_STYLE[concern.urgency] || URGENCY_STYLE.low}`}
+                    onClick={() => handleConcernClick(concern.indicator_code)}
+                    className={`w-full text-left p-3 rounded-lg border text-sm hover:brightness-95 transition-all cursor-pointer ${URGENCY_STYLE[concern.urgency] || URGENCY_STYLE.low}`}
                   >
                     <div className="flex items-start justify-between gap-2 mb-1">
                       <span className="font-medium">{concern.concern}</span>
-                      <span className="text-xs shrink-0 px-1.5 py-0.5 rounded bg-white bg-opacity-60">
+                      <span className="text-xs shrink-0 px-1.5 py-0.5 rounded bg-white bg-opacity-60 underline-offset-2 hover:underline">
                         {concern.indicator_code} · 緊迫度：{URGENCY_LABEL[concern.urgency] || concern.urgency}
                       </span>
                     </div>
@@ -119,7 +132,7 @@ export function CampusAIPanel({ campus, status, result, rawText, error }: Props)
                         建議行動：{concern.recommended_action}
                       </p>
                     )}
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>

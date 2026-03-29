@@ -273,13 +273,14 @@ export const COMMON_ISSUES_SYSTEM_PROMPT = `你是一位資深醫院品質管理
     }
   ],
   "campus_differentiation": "<各院區最顯著差異摘要（50 字以內）>",
-  "priority_recommendation": "<給品管委員會的最高優先建議（60 字以內）>",
+  "priority_recommendation": "<給品管委員會的最高優先建議（60 字以內）；只描述問題方向與行動，不訂期限>",
   "positive_highlights": ["<跨院區正面亮點>"]
 }
 
 注意：
 - common_issues 最多 3 項，只列真正跨院區的問題
-- 若某指標三院區都異常，必須列入 common_issues`;
+- 若某指標三院區都異常，必須列入 common_issues
+- priority_recommendation 不得訂定具體期限（如「一個月內」），由人工判讀後決定時程`;
 
 // ============================
 // Cross-campus Prompt Builders
@@ -335,10 +336,7 @@ ${sharedStr}
 
 export function parseCampusAnalysis(rawText: string): ParsedCampusAnalysis | null {
   try {
-    const jsonMatch = rawText.match(/```json\s*([\s\S]*?)\s*```/) ||
-                      rawText.match(/```\s*([\s\S]*?)\s*```/) ||
-                      [null, rawText];
-    const parsed = JSON.parse(jsonMatch[1] ?? rawText);
+    const parsed = JSON.parse(extractJSON(rawText));
     return {
       campus_summary: parsed.campus_summary ?? '',
       key_concerns: Array.isArray(parsed.key_concerns) ? parsed.key_concerns : [],
@@ -352,10 +350,7 @@ export function parseCampusAnalysis(rawText: string): ParsedCampusAnalysis | nul
 
 export function parseCommonIssues(rawText: string): ParsedCommonIssues | null {
   try {
-    const jsonMatch = rawText.match(/```json\s*([\s\S]*?)\s*```/) ||
-                      rawText.match(/```\s*([\s\S]*?)\s*```/) ||
-                      [null, rawText];
-    const parsed = JSON.parse(jsonMatch[1] ?? rawText);
+    const parsed = JSON.parse(extractJSON(rawText));
     return {
       common_issues: Array.isArray(parsed.common_issues) ? parsed.common_issues : [],
       campus_differentiation: parsed.campus_differentiation ?? '',
@@ -367,14 +362,20 @@ export function parseCommonIssues(rawText: string): ParsedCommonIssues | null {
   }
 }
 
+function extractJSON(rawText: string): string {
+  // 1. markdown code block（含收尾）
+  const m1 = rawText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (m1) return m1[1]!;
+  // 2. 找第一個 { 到最後一個 }（處理未閉合的 code block）
+  const start = rawText.indexOf('{');
+  const end = rawText.lastIndexOf('}');
+  if (start !== -1 && end > start) return rawText.slice(start, end + 1);
+  return rawText;
+}
+
 export function parseAIResponse(rawText: string): ParsedAnalysis | null {
   try {
-    // 嘗試提取 JSON（可能被 markdown code block 包住）
-    const jsonMatch = rawText.match(/```json\s*([\s\S]*?)\s*```/) ||
-                      rawText.match(/```\s*([\s\S]*?)\s*```/) ||
-                      [null, rawText];
-
-    const jsonStr = jsonMatch[1] ?? rawText;
+    const jsonStr = extractJSON(rawText);
     const parsed = JSON.parse(jsonStr);
 
     return {

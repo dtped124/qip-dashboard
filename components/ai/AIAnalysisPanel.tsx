@@ -8,7 +8,7 @@
  */
 
 import { useState, useCallback } from 'react';
-import { Bot, RefreshCw, ChevronDown, ChevronUp, AlertCircle, Shield, Zap, Clock, CheckCircle2, CircleDot } from 'lucide-react';
+import { Bot, RefreshCw, ChevronDown, ChevronUp, AlertCircle, Shield, Zap, Clock, CheckCircle2, CircleDot, FileDown } from 'lucide-react';
 import { analyzeIndicator, AIAnalysisError, type AIAnalysisResult } from '@/lib/ai/claudeClient';
 import { hasApiKey } from '@/lib/ai/apiKeyManager';
 import { getMonthlyUsage, formatCostTWD, formatTokens, isOverSoftLimit, getSoftLimitUSD } from '@/lib/ai/usageTracker';
@@ -271,6 +271,27 @@ export function AIAnalysisPanel({ promptInput, cacheKey }: Props) {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {parsed && (
+              <button
+                onClick={async e => {
+                  e.stopPropagation();
+                  const { exportSingleIndicatorReport } = await import('@/lib/export/reportExporter');
+                  await exportSingleIndicatorReport({
+                    indicatorCode: promptInput.meta.code,
+                    indicatorName: promptInput.meta.name,
+                    campus: promptInput.campus,
+                    latestValue: promptInput.latestValue != null ? String(promptInput.latestValue) : '—',
+                    latestMonth: promptInput.latestMonth ?? '—',
+                    peerValue: promptInput.peerValue != null ? String(promptInput.peerValue) : undefined,
+                    parsed,
+                  });
+                }}
+                className="p-1 text-gray-400 hover:text-purple-600 rounded"
+                title="匯出 Word 報告"
+              >
+                <FileDown size={14} />
+              </button>
+            )}
             <button
               onClick={e => { e.stopPropagation(); setIsForceRefresh(true); runAnalysis({ forceRefresh: true }); }}
               className="p-1 text-gray-400 hover:text-purple-600 rounded"

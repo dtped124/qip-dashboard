@@ -25,7 +25,6 @@ export interface SafetyResult {
 
 const PII_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /[A-Z][12]\d{8}/, label: '台灣身分證字號' },
-  { pattern: /\b[0-9]{7,}\b/, label: '疑似病歷號或長數字串' },
   { pattern: /[\w.+-]+@[\w-]+\.\w+/, label: 'Email 地址' },
   { pattern: /\b09\d{8}\b/, label: '手機號碼' },
   { pattern: /\b\d{4}-\d{4}-\d{4}-\d{4}\b/, label: '信用卡號' },

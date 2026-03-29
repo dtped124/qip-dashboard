@@ -24,7 +24,7 @@ import {
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
 const TIMEOUT_MS = 60_000;
-const MAX_TOKENS = 2048;
+const MAX_TOKENS = 4096;
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const KEY_PREFIX = 'qip_ai_cache_';
 
@@ -71,8 +71,11 @@ export async function analyzeCampus(
   const dataHash = computeDataHash(input);
 
   if (!options.forceRefresh) {
-    const cached = getCachedResult(cacheKey, dataHash, model);
-    if (cached) return { ...cached, isCached: true } as CampusAnalysisResult;
+    const cached = getCachedResult(cacheKey, dataHash, model) as CampusAnalysisResult | null;
+    if (cached) {
+      const reparsed = cached.parsed === null && cached.rawText ? parseCampusAnalysis(cached.rawText) : cached.parsed;
+      return { ...cached, parsed: reparsed, isCached: true };
+    }
   }
 
   const userPrompt = buildCampusAnalysisPrompt(input);
@@ -109,8 +112,11 @@ export async function analyzeCommonIssues(
   const dataHash = computeDataHash(input);
 
   if (!options.forceRefresh) {
-    const cached = getCachedResult(cacheKey, dataHash, model);
-    if (cached) return { ...cached, isCached: true } as CommonIssuesResult;
+    const cached = getCachedResult(cacheKey, dataHash, model) as CommonIssuesResult | null;
+    if (cached) {
+      const reparsed = cached.parsed === null && cached.rawText ? parseCommonIssues(cached.rawText) : cached.parsed;
+      return { ...cached, parsed: reparsed, isCached: true };
+    }
   }
 
   const userPrompt = buildCommonIssuesPrompt(input);

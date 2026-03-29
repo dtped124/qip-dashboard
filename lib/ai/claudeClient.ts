@@ -20,7 +20,7 @@ import { recordUsage, isOverSoftLimit, getSoftLimitUSD } from './usageTracker';
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
 const TIMEOUT_MS = 60_000; // 60 秒
-const MAX_TOKENS = 2048;
+const MAX_TOKENS = 4096;
 
 export interface AIAnalysisResult {
   parsed: ParsedAnalysis | null;
@@ -105,7 +105,13 @@ export async function analyzeIndicator(
   // 5. 查詢快取
   if (!options.forceRefresh) {
     const cached = getCached(cacheKey, dataHash, model);
-    if (cached) return cached;
+    if (cached) {
+      // 若快取中 parsed 為 null（舊版解析失敗），用新版 parser 重新嘗試
+      if (cached.parsed === null && cached.rawText) {
+        return { ...cached, parsed: parseAIResponse(cached.rawText) };
+      }
+      return cached;
+    }
   }
 
   // 6. 組裝並呼叫 API

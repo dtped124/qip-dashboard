@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Bot, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Bot, RefreshCw, AlertTriangle, FileDown } from 'lucide-react';
 import { CampusAIPanel, type PanelStatus } from './CampusAIPanel';
 import { CommonIssuesPanel } from './CommonIssuesPanel';
 import { analyzeCampus, analyzeCommonIssues } from '@/lib/ai/crossCampusClient';
@@ -327,12 +327,31 @@ export function CrossCampusAITab({ allData, quarterLabel, prevQuarterLabel, quar
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-500">{quarterLabel} 跨院區 AI 分析</p>
         {overallState === 'done' && (
-          <button
-            onClick={() => setOverallState('confirming')}
-            className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"
-          >
-            <RefreshCw size={12} /> 重新分析
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={async () => {
+                const { exportCrossRampusReport } = await import('@/lib/export/reportExporter');
+                const campusResults = ALL_CAMPUSES
+                  .filter(c => campusStates[c]?.result)
+                  .map(c => ({ campus: c, result: campusStates[c]!.result! }));
+                await exportCrossRampusReport({
+                  quarter: quarterLabel,
+                  prevQuarter: prevQuarterLabel,
+                  campusResults,
+                  commonIssues: commonState.result,
+                });
+              }}
+              className="flex items-center gap-1 text-xs text-purple-600 hover:text-purple-800 font-medium"
+            >
+              <FileDown size={12} /> 匯出 Word 報告
+            </button>
+            <button
+              onClick={() => setOverallState('confirming')}
+              className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"
+            >
+              <RefreshCw size={12} /> 重新分析
+            </button>
+          </div>
         )}
       </div>
 
