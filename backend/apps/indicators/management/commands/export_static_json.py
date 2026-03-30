@@ -54,7 +54,7 @@ class Command(BaseCommand):
             dashboard_path = os.path.join(output_dir, f"dashboard-{campus}.json")
             with open(dashboard_path, "w", encoding="utf-8") as f:
                 json.dump(response.data, f, ensure_ascii=False, separators=(",", ":"))
-            self.stdout.write(f"  ✓ {dashboard_path}")
+            self.stdout.write(f"  [OK] {dashboard_path}")
 
             # 2. Per-indicator detail data
             count = 0
@@ -69,7 +69,7 @@ class Command(BaseCommand):
                     resp = indicator_data(req, code)
                     detail["data"] = resp.data
                 except Exception as e:
-                    self.stderr.write(f"  ✗ {code} data: {e}")
+                    self.stderr.write(f"  [ERR] {code} data: {e}")
                     detail["data"] = {"data": [], "total": 0}
 
                 # Summaries
@@ -78,7 +78,7 @@ class Command(BaseCommand):
                     resp = indicator_summaries(req, code)
                     detail["summaries"] = resp.data
                 except Exception as e:
-                    self.stderr.write(f"  ✗ {code} summaries: {e}")
+                    self.stderr.write(f"  [ERR] {code} summaries: {e}")
                     detail["summaries"] = {"data": [], "tcpi": [], "total": 0}
 
                 # Analysis (monthly)
@@ -87,7 +87,7 @@ class Command(BaseCommand):
                     resp = indicator_analysis(req, code)
                     detail["analysis"] = resp.data
                 except Exception as e:
-                    self.stderr.write(f"  ✗ {code} analysis: {e}")
+                    self.stderr.write(f"  [ERR] {code} analysis: {e}")
                     detail["analysis"] = {"status": "neutral", "anomalies": [], "control_chart": None, "peer_value": None}
 
                 detail_path = os.path.join(detail_dir, f"{code}-{campus}.json")
@@ -95,6 +95,6 @@ class Command(BaseCommand):
                     json.dump(detail, f, ensure_ascii=False, separators=(",", ":"))
                 count += 1
 
-            self.stdout.write(f"  ✓ {count} 項指標詳情")
+            self.stdout.write(f"  [OK] {count} indicators exported")
 
-        self.stdout.write(self.style.SUCCESS(f"\n完成！靜態 JSON 已匯出至 {output_dir}"))
+        self.stdout.write(self.style.SUCCESS(f"\nDone! Static JSON exported to {output_dir}"))
