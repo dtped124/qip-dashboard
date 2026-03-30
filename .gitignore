@@ -34,3 +34,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# data files
+*.xlsx
+*.xls
+
+# R
+.Rhistory
+
+# claude local settings
+.claude/settings.local.json

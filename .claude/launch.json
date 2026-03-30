@@ -5,7 +5,14 @@
       "name": "qip-dev",
       "runtimeExecutable": "node",
       "runtimeArgs": ["node_modules/next/dist/bin/next", "dev"],
-      "port": 3000
+      "port": 3000,
+      "autoPort": true
+    },
+    {
+      "name": "qip-portable-dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["../qip-portable/dev.js", "dev", "-p", "3001"],
+      "port": 3001
     }
   ]
 }

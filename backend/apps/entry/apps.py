@@ -1,0 +1,7 @@
+from django.apps import AppConfig
+
+
+class EntryConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.entry"
+    verbose_name = "填報系統"

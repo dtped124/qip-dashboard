@@ -78,6 +78,13 @@ class Indicator(models.Model):
     campuses = models.JSONField("適用院區", default=list)
     formula = models.TextField("計算公式", blank=True, default="")
     description = models.TextField("說明", blank=True, default="")
+    # 填報系統相關欄位
+    has_denominator = models.BooleanField("有分母", default=True)
+    entry_mode = models.CharField(
+        "填報模式", max_length=20,
+        choices=[("manual", "手動填報"), ("case_list", "個案清單審查")],
+        default="manual",
+    )
     created_at = models.DateTimeField("建立時間", auto_now_add=True)
     updated_at = models.DateTimeField("更新時間", auto_now=True)
 

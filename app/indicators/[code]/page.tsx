@@ -45,6 +45,7 @@ export default function IndicatorDetailPage() {
 
   useEffect(() => {
     if (!code || !campus) return;
+    setDetailData(null);
     setLoadingDetail(true);
     Promise.all([
       loadIndicatorData(code, campus),

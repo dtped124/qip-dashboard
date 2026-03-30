@@ -1,9 +1,11 @@
 'use client';
 
 import { useDashboardStore } from '@/lib/store/dashboardStore';
-import { Search, Upload } from 'lucide-react';
+import { Search, Upload, LogOut } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { ImportWizard } from '@/components/import/ImportWizard';
+import { logout } from '@/lib/entry/api';
 
 /** 即時時鐘 + 心跳脈搏，證明應用仍在運行 */
 function HeartbeatClock() {
@@ -37,6 +39,16 @@ export function Header() {
   const searchQuery = useDashboardStore(s => s.searchQuery);
   const setSearchQuery = useDashboardStore(s => s.setSearchQuery);
   const [showImport, setShowImport] = useState(false);
+  const router = useRouter();
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch {
+      // 即使 API 失敗仍跳轉
+    }
+    router.replace('/entry/login');
+  };
 
   return (
     <>
@@ -72,6 +84,16 @@ export function Header() {
         >
           <Upload size={16} />
           匯入資料
+        </button>
+
+        {/* 登出 */}
+        <button
+          onClick={handleLogout}
+          title="登出"
+          className="flex items-center gap-1.5 px-3 py-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg text-sm transition-colors"
+        >
+          <LogOut size={16} />
+          登出
         </button>
       </header>
 

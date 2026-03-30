@@ -6,25 +6,32 @@ echo ============================================
 echo   QIP Dashboard - Starting...
 echo ============================================
 echo.
-echo [1/3] Starting backend (PostgreSQL + Redis + Django API)...
+echo [1/4] Building and starting backend containers...
 docker-compose up -d
 echo.
-echo [2/3] Running database migrations...
-timeout /t 5 /nobreak >nul
+echo [2/4] Waiting for database to be ready...
+timeout /t 8 /nobreak >nul
+
+echo [3/4] Running migrations and seeding data...
 docker-compose exec api python manage.py migrate --noinput
+docker-compose exec api python manage.py seed_entry_base
 docker-compose exec api python manage.py seed_indicators
 echo.
-echo [3/3] Starting Next.js frontend...
-start "QIP-Frontend" /min cmd /c "cd /d "%~dp0" && set PORT=3000 && node node_modules\next\dist\bin\next dev -p 3000"
+echo [4/4] Clearing Next.js cache and starting frontend...
+if exist .next rmdir /s /q .next
+start "QIP-Frontend" /min cmd /c "cd /d "%~dp0" && node node_modules\next\dist\bin\next dev -p 3000"
 echo Waiting for frontend to start...
 timeout /t 8 /nobreak >nul
-start "" http://localhost:3000
+start "" http://localhost:3000/entry/login
 echo.
 echo ============================================
 echo   Backend API:  http://localhost:8001
 echo   Frontend UI:  http://localhost:3000
+echo   Login:        http://localhost:3000/entry/login
 echo   Admin:        http://localhost:8001/admin/
 echo ============================================
+echo.
+echo   Login: admin  /  Password: Admin1234!
 echo.
 echo All services started. Frontend window is minimized.
 echo Press any key to stop all services...

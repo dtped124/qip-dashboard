@@ -30,6 +30,9 @@ class Command(BaseCommand):
         updated = 0
 
         for code, meta in INDICATOR_META.items():
+            # 純計數型（data_nature="continuous"）無分母，直接填數值
+            has_denominator = meta["data_nature"] != "continuous"
+
             obj, was_created = Indicator.objects.update_or_create(
                 code=code,
                 defaults={
@@ -43,6 +46,8 @@ class Command(BaseCommand):
                     "source": "preset",
                     "aliases": meta.get("aliases", []),
                     "campuses": meta.get("campuses", []),
+                    "has_denominator": has_denominator,
+                    "entry_mode": meta.get("entry_mode", "manual"),
                 },
             )
             if was_created:
