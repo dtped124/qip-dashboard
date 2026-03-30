@@ -97,7 +97,7 @@ function filterToWhitelist(data: Record<string, unknown>): Record<string, unknow
 // 小樣本分子遮蔽
 // ============================
 
-function maskSmallNumerators(
+function _maskSmallNumerators(
   obj: unknown,
   path: string,
   maskedFields: string[],

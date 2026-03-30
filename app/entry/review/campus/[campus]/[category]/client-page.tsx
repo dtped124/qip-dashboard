@@ -182,7 +182,7 @@ function ReviewIndicatorRow({
 export default function ReviewDetailPage() {
   const params = useParams()
   const searchParams = useSearchParams()
-  const router = useRouter()
+  const _router = useRouter()
 
   const campusCode = params.campus as string
   const categoryCode = (params.category as string).toUpperCase()
