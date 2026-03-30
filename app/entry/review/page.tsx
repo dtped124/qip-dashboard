@@ -18,7 +18,7 @@ const STATUS_CONFIG: Record<string, { emoji: string; label: string; className: s
 }
 
 function StatusCell({
-  campusCode, categoryCode, status, reportId: _reportId, year, month,
+  campusCode, categoryCode, status, year, month,
 }: {
   campusCode: string
   categoryCode: string

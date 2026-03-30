@@ -26,8 +26,6 @@ const COLOR_RED_BG    = 'FEE2E2';
 const COLOR_ORANGE_BG = 'FFEDD5';
 const COLOR_YELLOW_BG = 'FEF9C3';
 
-const noBorder = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
-const _noBorders = { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder };
 const cellBorder = { style: BorderStyle.SINGLE, size: 1, color: 'E5E7EB' };
 const cellBorders = { top: cellBorder, bottom: cellBorder, left: cellBorder, right: cellBorder };
 
