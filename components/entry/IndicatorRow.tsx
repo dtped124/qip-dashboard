@@ -127,7 +127,7 @@ export default function IndicatorRow({ indicator, value, validation, locked, onC
         </td>
         <td className="px-3 py-2 text-sm text-right text-gray-700">
           {indicator.value !== null ? formatValue(indicator.value, indicator.unit) : '—'}
-          {indicator.exclusion_count > 0 && (
+          {(indicator.exclusion_count ?? 0) > 0 && (
             <span className="ml-1 text-xs text-gray-400">
               (排除{indicator.exclusion_count})
             </span>
