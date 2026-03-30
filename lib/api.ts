@@ -23,25 +23,6 @@ import type {
 import { INDICATOR_META } from './constants';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
-const IS_DEMO = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
-
-// ── Static JSON base path (GitHub Pages) ──
-// In demo mode, load pre-exported JSON from /data/ instead of hitting the API
-
-function getBasePath(): string {
-  // Next.js injects basePath at build time via __NEXT_DATA__
-  if (typeof window === 'undefined') return '';
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const nextData = (window as any).__NEXT_DATA__;
-  return nextData?.basePath || '';
-}
-
-async function staticFetch<T>(path: string): Promise<T> {
-  const basePath = getBasePath();
-  const res = await fetch(`${basePath}${path}`);
-  if (!res.ok) throw new Error(`Static data not found: ${path}`);
-  return res.json();
-}
 
 // ── Generic fetch wrapper ──
 
@@ -100,11 +81,9 @@ interface DashboardResponse {
  * 將 Django 回應轉換為前端的 IndicatorData[] 格式。
  */
 export async function loadDashboardFromAPI(campus: Campus): Promise<IndicatorData[]> {
-  const resp = IS_DEMO
-    ? await staticFetch<DashboardResponse>(`/data/dashboard-${campus}.json`)
-    : await apiFetch<DashboardResponse>(
-        `/api/v1/dashboard/?campus=${encodeURIComponent(campus)}`
-      );
+  const resp = await apiFetch<DashboardResponse>(
+    `/api/v1/dashboard/?campus=${encodeURIComponent(campus)}`
+  );
 
   return resp.data.map(item => {
     const meta = INDICATOR_META[item.code];
@@ -184,15 +163,9 @@ interface SummaryResponse {
  * 載入單一指標的完整月份資料（用於詳情頁）
  */
 export async function loadIndicatorData(code: string, campus: Campus): Promise<MonthlyDataPoint[]> {
-  let resp: DataPointResponse;
-  if (IS_DEMO) {
-    const detail = await staticFetch<{ data: DataPointResponse }>(`/data/detail/${code}-${campus}.json`);
-    resp = detail.data;
-  } else {
-    resp = await apiFetch<DataPointResponse>(
-      `/api/v1/indicators/${code}/data/?campus=${encodeURIComponent(campus)}`
-    );
-  }
+  const resp = await apiFetch<DataPointResponse>(
+    `/api/v1/indicators/${code}/data/?campus=${encodeURIComponent(campus)}`
+  );
   return resp.data.map(dp => ({
     year: dp.year,
     month: dp.month,
@@ -209,15 +182,9 @@ export async function loadIndicatorSummaries(code: string, campus: Campus): Prom
   summaries: YearlySummary[];
   peerValue: number | null;
 }> {
-  let resp: SummaryResponse;
-  if (IS_DEMO) {
-    const detail = await staticFetch<{ summaries: SummaryResponse }>(`/data/detail/${code}-${campus}.json`);
-    resp = detail.summaries;
-  } else {
-    resp = await apiFetch<SummaryResponse>(
-      `/api/v1/indicators/${code}/summaries/?campus=${encodeURIComponent(campus)}`
-    );
-  }
+  const resp = await apiFetch<SummaryResponse>(
+    `/api/v1/indicators/${code}/summaries/?campus=${encodeURIComponent(campus)}`
+  );
 
   const summaries: YearlySummary[] = resp.data.map(s => ({
     year: s.year,
@@ -289,16 +256,10 @@ export async function loadAnalysis(code: string, campus: Campus, period?: 'month
   controlChart: ControlChartParams | null;
   peerValue: number | null;
 }> {
-  let resp: AnalysisResponse;
-  if (IS_DEMO) {
-    const detail = await staticFetch<{ analysis: AnalysisResponse }>(`/data/detail/${code}-${campus}.json`);
-    resp = detail.analysis;
-  } else {
-    const periodParam = period === 'quarterly' ? '&period=quarterly' : '';
-    resp = await apiFetch<AnalysisResponse>(
-      `/api/v1/indicators/${code}/analysis/?campus=${encodeURIComponent(campus)}${periodParam}`
-    );
-  }
+  const periodParam = period === 'quarterly' ? '&period=quarterly' : '';
+  const resp = await apiFetch<AnalysisResponse>(
+    `/api/v1/indicators/${code}/analysis/?campus=${encodeURIComponent(campus)}${periodParam}`
+  );
 
   const anomalies: AnomalyResult[] = resp.anomalies.map(a => ({
     mechanism: a.mechanism as AnomalyResult['mechanism'],

@@ -5,7 +5,7 @@
 
 import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
-  AlignmentType, BorderStyle, WidthType, ShadingType,
+  AlignmentType, HeadingLevel, BorderStyle, WidthType, ShadingType,
   LevelFormat, Header, Footer, PageNumber, VerticalAlign,
 } from 'docx';
 import type { ParsedAnalysis } from '@/lib/ai/promptBuilder';
@@ -26,6 +26,8 @@ const COLOR_RED_BG    = 'FEE2E2';
 const COLOR_ORANGE_BG = 'FFEDD5';
 const COLOR_YELLOW_BG = 'FEF9C3';
 
+const noBorder = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
+const noBorders = { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder };
 const cellBorder = { style: BorderStyle.SINGLE, size: 1, color: 'E5E7EB' };
 const cellBorders = { top: cellBorder, bottom: cellBorder, left: cellBorder, right: cellBorder };
 

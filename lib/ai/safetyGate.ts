@@ -97,7 +97,6 @@ function filterToWhitelist(data: Record<string, unknown>): Record<string, unknow
 // 小樣本分子遮蔽
 // ============================
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function maskSmallNumerators(
   obj: unknown,
   path: string,
