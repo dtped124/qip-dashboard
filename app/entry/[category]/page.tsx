@@ -113,10 +113,20 @@ function SubmitConfirmDialog({
 
 // ─── 主頁面 ─────────────────────────────────────────────────
 
+// 有效的面向代碼格式：HA01 ~ HA10
+const VALID_CATEGORY_RE = /^HA\d{2}$/
+
 export default function CategoryFormPage() {
   const params = useParams()
   const router = useRouter()
   const categoryCode = (params.category as string).toUpperCase()
+
+  // 防止 /entry/admin、/entry/review 等靜態路由被動態路由攔截（.next cache 過期時可能發生）
+  useEffect(() => {
+    if (!VALID_CATEGORY_RE.test(categoryCode)) {
+      router.replace(`/entry/${params.category as string}`)
+    }
+  }, [categoryCode, params.category, router])
 
   const [formData, setFormData] = useState<EntryFormResponse | null>(null)
   const [formValues, setFormValues] = useState<FormValues>({})

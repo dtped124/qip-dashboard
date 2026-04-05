@@ -6,6 +6,7 @@
 - save_draft：暫存草稿
 - submit_category：送審面向
 """
+import calendar
 import datetime
 from decimal import Decimal, InvalidOperation
 
@@ -50,19 +51,20 @@ def _get_indicator_category_code(indicator_code: str) -> str:
 
 
 def _get_active_assignments(user, year: int, month: int):
-    """取得使用者在指定月份有效的指標指派"""
-    period_date = datetime.date(year + 1911, month, 1)
+    """取得使用者在指定月份有效的指標指派（不限院區，依指派本身的 campus）"""
+    ad_year = year + 1911
+    last_day = calendar.monthrange(ad_year, month)[1]
+    period_end = datetime.date(ad_year, month, last_day)
+    period_start = datetime.date(ad_year, month, 1)
     return IndicatorAssignment.objects.filter(
         user=user,
-        campus=user.campus,
-        effective_from__lte=period_date,
+        effective_from__lte=period_end,
     ).filter(
         effective_to__isnull=True  # 現行有效
     ) | IndicatorAssignment.objects.filter(
         user=user,
-        campus=user.campus,
-        effective_from__lte=period_date,
-        effective_to__gte=period_date,
+        effective_from__lte=period_end,
+        effective_to__gte=period_start,
     )
 
 
@@ -71,15 +73,17 @@ def get_my_tasks(user, year: int, month: int) -> dict:
     取得填報者的任務清單（§8.2 my-tasks）
     回傳：期間資訊、截止日、退回通知、各面向狀態與進度
     """
-    campus = user.campus
-    if not campus:
-        return {"error": "帳號未設定院區"}
-
     deadline_info = get_deadline_info(year, month)
 
     # 取得有效指派，依面向分組
     assignments = _get_active_assignments(user, year, month).select_related("campus")
     indicator_codes = list(assignments.values_list("indicator_code", flat=True).distinct())
+
+    # 取得指派涉及的所有院區
+    assignment_campus_ids = set(assignments.values_list("campus_id", flat=True).distinct())
+    # 若無任何指派，使用帳號院區作為 fallback
+    if not assignment_campus_ids and user.campus:
+        assignment_campus_ids = {user.campus_id}
 
     # 依面向代碼分組
     category_indicators: dict[str, list[str]] = {}
@@ -87,11 +91,11 @@ def get_my_tasks(user, year: int, month: int) -> dict:
         cat_code = _get_indicator_category_code(code)
         category_indicators.setdefault(cat_code, []).append(code)
 
-    # 取得各面向 MonthlyReport
+    # 取得各面向 MonthlyReport（涵蓋所有指派院區）
     reports = {
         r.category.code: r
         for r in MonthlyReport.objects.filter(
-            campus=campus, year=year, month=month
+            campus_id__in=assignment_campus_ids, year=year, month=month
         ).select_related("category")
     }
 
@@ -195,21 +199,22 @@ def get_category_form(user, campus: Campus, year: int, month: int, category_code
         defaults={"status": ReportStatus.UNFILLED},
     )
 
-    # 取得此面向負責的指標（此使用者負責 + 屬於此院區此面向）
-    period_date = datetime.date(year + 1911, month, 1)
+    # 取得此面向負責的指標（此使用者負責 + 屬於此面向）
+    ad_year = year + 1911
+    last_day = calendar.monthrange(ad_year, month)[1]
+    period_end = datetime.date(ad_year, month, last_day)
+    period_start = datetime.date(ad_year, month, 1)
     assignments = IndicatorAssignment.objects.filter(
         user=user,
-        campus=campus,
         indicator_code__startswith=category_code,
-        effective_from__lte=period_date,
+        effective_from__lte=period_end,
     ).filter(
         effective_to__isnull=True
     ) | IndicatorAssignment.objects.filter(
         user=user,
-        campus=campus,
         indicator_code__startswith=category_code,
-        effective_from__lte=period_date,
-        effective_to__gte=period_date,
+        effective_from__lte=period_end,
+        effective_to__gte=period_start,
     )
     indicator_codes = list(assignments.values_list("indicator_code", flat=True).distinct())
 
@@ -456,13 +461,22 @@ def submit_category(user, campus: Campus, year: int, month: int, category_code: 
         return {"ok": False, "error": f"目前狀態 {report.status} 不可重複送審"}
 
     # 取得負責的指標
-    period_date = datetime.date(year + 1911, month, 1)
+    ad_year = year + 1911
+    last_day = calendar.monthrange(ad_year, month)[1]
+    period_end = datetime.date(ad_year, month, last_day)
+    period_start = datetime.date(ad_year, month, 1)
     assignments = IndicatorAssignment.objects.filter(
         user=user,
-        campus=campus,
         indicator_code__startswith=category_code,
-        effective_from__lte=period_date,
-    ).filter(effective_to__isnull=True)
+        effective_from__lte=period_end,
+    ).filter(
+        effective_to__isnull=True
+    ) | IndicatorAssignment.objects.filter(
+        user=user,
+        indicator_code__startswith=category_code,
+        effective_from__lte=period_end,
+        effective_to__gte=period_start,
+    )
     indicator_codes = list(assignments.values_list("indicator_code", flat=True).distinct())
 
     if not indicator_codes:

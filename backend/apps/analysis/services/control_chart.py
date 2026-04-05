@@ -95,12 +95,6 @@ def select_chart_type(data_points: list[MonthlyDataPoint], data_nature: DataNatu
         return "I-MR"
 
     if data_nature == "binomial_rate":
-        total_num = sum(dp.numerator for dp in with_nd)
-        total_den = sum(dp.denominator for dp in with_nd)
-        p_bar = total_num / total_den
-        avg_n = total_den / len(with_nd)
-        if p_bar * avg_n < 5:
-            return "I-MR"
         return "P"
 
     if data_nature == "poisson_rate":

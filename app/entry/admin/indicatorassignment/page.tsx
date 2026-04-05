@@ -58,7 +58,8 @@ export default function IndicatorAssignmentPage() {
       ])
       // fetch indicators from the v1 API
       const indRes = await fetch(`${API_BASE}/api/v1/indicators/`, { credentials: 'include' })
-      const indData: IndicatorMeta[] = indRes.ok ? await indRes.json() : []
+      const indJson = indRes.ok ? await indRes.json() : { data: [] }
+      const indData: IndicatorMeta[] = Array.isArray(indJson) ? indJson : (indJson.data ?? [])
 
       setAssignments(a)
       setUsers(u)

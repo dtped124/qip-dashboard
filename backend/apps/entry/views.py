@@ -95,9 +95,8 @@ def assignment_detail(request, pk):
         serializer.save()
         return Response(IndicatorAssignmentSerializer(assignment).data)
 
-    # DELETE：設定 effective_to = today（軟刪除，保留歷史）
-    assignment.effective_to = datetime.date.today()
-    assignment.save(update_fields=["effective_to"])
+    # DELETE：硬刪除（立即移除指派）
+    assignment.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 

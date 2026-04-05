@@ -35,14 +35,8 @@ export function selectChartType(
   const coverage = validPoints.length > 0 ? withND.length / validPoints.length : 0;
   if (coverage < 0.5) return 'I-MR';
 
-  // 二項比率型 → 稀有事件檢查
+  // 二項比率型 → 有分子分母即用 P Chart
   if (dataNature === 'binomial_rate') {
-    const totalNum = withND.reduce((s, dp) => s + dp.numerator!, 0);
-    const totalDen = withND.reduce((s, dp) => s + dp.denominator!, 0);
-    const pBar = totalNum / totalDen;
-    const avgN = totalDen / withND.length;
-    // p̄ × n̄ < 5 → 二項近似常態分布失效，P Chart 不適用
-    if (pBar * avgN < 5) return 'I-MR';
     return 'P';
   }
 

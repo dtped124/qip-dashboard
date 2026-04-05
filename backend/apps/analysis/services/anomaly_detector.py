@@ -53,7 +53,7 @@ def analyze_indicator(
     # Mechanism 1: Control chart
     control_chart: ControlChartParams | None = None
     if not skip_control_chart:
-        recent_24 = sorted_data[-24:]
+        recent_24 = sorted_data[-25:]
         chart_type = select_chart_type(recent_24, data_nature)
         control_chart = compute_control_chart_params(recent_24, chart_type)
         if control_chart:

@@ -66,4 +66,6 @@ services:
 
 volumes:
   postgres_data:
+    external: true
+    name: qip-dashboard_postgres_data
   redis_data:

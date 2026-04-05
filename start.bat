@@ -6,6 +6,13 @@ echo ============================================
 echo   QIP Dashboard - Starting...
 echo ============================================
 echo.
+
+echo [0/4] Cleaning up stale processes...
+REM 停掉可能衝突的 backend/docker-compose 容器
+docker-compose -f backend\docker-compose.yml down >nul 2>&1
+REM 殺掉殘留的 node 進程（避免 port 3000 衝突）
+taskkill /f /im node.exe >nul 2>&1
+
 echo [1/4] Building and starting backend containers...
 docker-compose up -d
 echo.
@@ -21,7 +28,7 @@ echo [4/4] Clearing Next.js cache and starting frontend...
 if exist .next rmdir /s /q .next
 start "QIP-Frontend" /min cmd /c "cd /d "%~dp0" && node node_modules\next\dist\bin\next dev -p 3000"
 echo Waiting for frontend to start...
-timeout /t 8 /nobreak >nul
+timeout /t 10 /nobreak >nul
 start "" http://localhost:3000/entry/login
 echo.
 echo ============================================

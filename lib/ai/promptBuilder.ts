@@ -121,7 +121,16 @@ export function buildUserPrompt(input: PromptInput): string {
   // 管制圖資訊
   let chartStr = '無管制圖資料';
   if (controlChart) {
-    chartStr = `類型: ${controlChart.chartType}，中心線(CL): ${controlChart.cl?.toFixed(3) ?? 'N/A'}，UCL: ${controlChart.ucl?.toFixed(3) ?? 'N/A'}，LCL: ${controlChart.lcl?.toFixed(3) ?? 'N/A'}`;
+    if ((controlChart.chartType === 'P' || controlChart.chartType === 'U') && controlChart.variableLimits?.length) {
+      // P/U Chart：管制限隨樣本數變動，列出最近月份的實際 UCL/LCL
+      const recentLimits = controlChart.variableLimits.slice(-6);
+      const limitsDetail = recentLimits
+        .map(vl => `${vl.year}.${String(vl.month).padStart(2, '0')}: UCL=${vl.ucl.toFixed(2)}, LCL=${vl.lcl.toFixed(2)}, 樣本數=${vl.sampleSize}`)
+        .join('\n  ');
+      chartStr = `類型: ${controlChart.chartType} Chart（變動管制限，UCL/LCL 隨每月樣本數不同）\n中心線(CL): ${controlChart.cl?.toFixed(3) ?? 'N/A'}\n各月管制限（最近 ${recentLimits.length} 期）:\n  ${limitsDetail}\n注意：判斷是否超出管制限時，必須比對該月份對應的 UCL/LCL，不可使用平均值。`;
+    } else {
+      chartStr = `類型: ${controlChart.chartType}，中心線(CL): ${controlChart.cl?.toFixed(3) ?? 'N/A'}，UCL: ${controlChart.ucl?.toFixed(3) ?? 'N/A'}，LCL: ${controlChart.lcl?.toFixed(3) ?? 'N/A'}`;
+    }
   }
 
   return `請分析以下醫院品質指標的異常狀況，並提供改善建議。

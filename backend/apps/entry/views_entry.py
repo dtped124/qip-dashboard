@@ -10,6 +10,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.entry.models import Campus, IndicatorAssignment
 from apps.entry.services.entry_service import (
     get_category_form,
     get_my_tasks,
@@ -17,6 +18,19 @@ from apps.entry.services.entry_service import (
     submit_category,
 )
 from apps.entry.services.period import get_current_period, get_current_tw_year_month
+
+
+def _resolve_campus(user, category_code: str = "") -> Campus | None:
+    """從指派記錄取得使用者對某面向的院區，找不到則 fallback 到 user.campus"""
+    if category_code:
+        assignment = IndicatorAssignment.objects.filter(
+            user=user,
+            indicator_code__startswith=category_code,
+            effective_to__isnull=True,
+        ).select_related("campus").first()
+        if assignment:
+            return assignment.campus
+    return user.campus
 
 
 def _parse_year_month(request) -> tuple[int, int]:
@@ -35,9 +49,6 @@ def _parse_year_month(request) -> tuple[int, int]:
 def my_tasks(request):
     """GET /api/entry/my-tasks?year=115&month=3"""
     user = request.user
-    if not user.campus:
-        return Response({"detail": "帳號未設定院區，請聯絡管理員"}, status=status.HTTP_400_BAD_REQUEST)
-
     year, month = _parse_year_month(request)
     data = get_my_tasks(user, year, month)
     if "error" in data:
@@ -48,16 +59,16 @@ def my_tasks(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def entry_form(request):
-    """GET /api/entry/form?campus=zhubei&year=115&month=3&category=HA03"""
+    """GET /api/entry/form?year=115&month=3&category=HA03"""
     user = request.user
-    campus = user.campus
-    if not campus:
-        return Response({"detail": "帳號未設定院區"}, status=status.HTTP_400_BAD_REQUEST)
-
     year, month = _parse_year_month(request)
     category_code = request.query_params.get("category", "")
     if not category_code:
         return Response({"detail": "缺少 category 參數"}, status=status.HTTP_400_BAD_REQUEST)
+
+    campus = _resolve_campus(user, category_code)
+    if not campus:
+        return Response({"detail": "帳號未設定院區"}, status=status.HTTP_400_BAD_REQUEST)
 
     data = get_category_form(user, campus, year, month, category_code)
     if "error" in data:
@@ -73,10 +84,6 @@ def entry_save_draft(request):
     body: { year, month, category, entries: [{indicator_code, numerator, denominator, note, sub_entries?}] }
     """
     user = request.user
-    campus = user.campus
-    if not campus:
-        return Response({"detail": "帳號未設定院區"}, status=status.HTTP_400_BAD_REQUEST)
-
     data = request.data
     year = data.get("year")
     month = data.get("month")
@@ -85,6 +92,10 @@ def entry_save_draft(request):
 
     if not all([year, month, category_code]):
         return Response({"detail": "缺少必要參數：year, month, category"}, status=status.HTTP_400_BAD_REQUEST)
+
+    campus = _resolve_campus(user, category_code)
+    if not campus:
+        return Response({"detail": "帳號未設定院區"}, status=status.HTTP_400_BAD_REQUEST)
 
     result = save_draft(user, campus, int(year), int(month), category_code, entries)
     if not result["ok"]:
@@ -100,10 +111,6 @@ def entry_submit(request):
     body: { year, month, category }
     """
     user = request.user
-    campus = user.campus
-    if not campus:
-        return Response({"detail": "帳號未設定院區"}, status=status.HTTP_400_BAD_REQUEST)
-
     data = request.data
     year = data.get("year")
     month = data.get("month")
@@ -111,6 +118,10 @@ def entry_submit(request):
 
     if not all([year, month, category_code]):
         return Response({"detail": "缺少必要參數：year, month, category"}, status=status.HTTP_400_BAD_REQUEST)
+
+    campus = _resolve_campus(user, category_code)
+    if not campus:
+        return Response({"detail": "帳號未設定院區"}, status=status.HTTP_400_BAD_REQUEST)
 
     result = submit_category(user, campus, int(year), int(month), category_code)
     if not result["ok"]:
