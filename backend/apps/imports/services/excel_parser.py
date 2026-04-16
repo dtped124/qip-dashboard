@@ -357,6 +357,32 @@ def parse_qip_excel(file_bytes: bytes, file_name: str) -> ParseResult:
                     else:
                         value = raw_ratio
                     computed_from_nd = True
+
+                    # Sanity check: 比對主儲存格顯示值與 n/d 計算值，差異 >3 倍時
+                    # 寫一筆警告供人工檢視。實務上兩側都可能出錯：
+                    #   - n/d 偏大 → 分母漏一位數 typo（如 d=23 應為 526）
+                    #   - 主儲存格偏大 → 儲存格單位/格式問題
+                    # 沒有可靠的通用規則能自動判別哪邊才對，且自動翻轉會傷到
+                    # 其他正規化邏輯產出的合理 n/d 值，所以這裡僅警告、不覆蓋。
+                    # 確認後的單筆錯誤請以資料庫更新處理。
+                    main_cell_value = normalize_monthly_value(
+                        cr.value, code, year, campus, cr.had_symbol
+                    )
+                    if (
+                        main_cell_value is not None
+                        and main_cell_value > 0
+                        and value is not None
+                        and value > 0
+                    ):
+                        ratio = max(value, main_cell_value) / min(value, main_cell_value)
+                        if ratio > 3:
+                            direction = "n/d 偏大 (疑似分母 typo)" if value > main_cell_value else "儲存格偏大 (疑似格式錯誤)"
+                            result.errors.append(
+                                f"[警告] {code} {campus} {year}年{m + 1}月: "
+                                f"n/d 計算值 {value:.4f} 與儲存格顯示值 {main_cell_value:.4f} "
+                                f"差異 {ratio:.1f} 倍 (n={numerator}, d={denominator}) — {direction}；"
+                                f"請人工確認後以資料庫更新修正。"
+                            )
                 elif is_rate and numerator is not None and numerator == 0:
                     value = 0
                     computed_from_nd = True
