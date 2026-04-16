@@ -8,6 +8,7 @@ from django.core.management.base import BaseCommand
 
 from apps.analysis.services.anomaly_detector import analyze_indicator
 from apps.analysis.services.control_chart import MonthlyDataPoint
+from apps.indicators.constants import SKIP_SPC_INDICATORS
 from apps.indicators.models import Alert, DataPoint, Indicator, TCPIBenchmark
 
 
@@ -53,10 +54,11 @@ class Command(BaseCommand):
                     elif campus == "竹東":
                         peer_value = tcpi.district_hospital
 
-                skip_cc = ind.code.startswith("HA10")
+                skip_cc = ind.code in SKIP_SPC_INDICATORS
+                target = ind.target_value if ind.target_mode and ind.target_value is not None else None
                 result = analyze_indicator(
                     monthly_data, peer_value, ind.direction, ind.data_nature,
-                    skip_control_chart=skip_cc,
+                    skip_control_chart=skip_cc, target_value=target,
                 )
 
                 # Clear and recreate alerts

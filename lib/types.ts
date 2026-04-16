@@ -54,6 +54,9 @@ export interface IndicatorMeta {
   dataNature: DataNature;
   /** @deprecated Use direction instead. Kept for backward compat. */
   isReverse: boolean;
+  // 挑戰平均值模式
+  targetMode?: boolean;
+  targetValue?: number | null;
 }
 
 // === Dexie 資料庫表型別 ===
@@ -175,6 +178,9 @@ export interface ControlChartParams {
   lcl2: number;      // 2σ 下限
   n: number;         // 數據點數量
   variableLimits?: VariableLimit[];  // P/U charts: per-point limits
+  // 挑戰平均值模式（吳文祥教授 SPC 範本同名功能）
+  targetMode?: boolean;
+  targetValue?: number | null;
 }
 
 export interface AnomalyResult {

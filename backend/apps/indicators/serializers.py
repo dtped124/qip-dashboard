@@ -10,6 +10,7 @@ class IndicatorSerializer(serializers.ModelSerializer):
             "code", "name", "category", "unit", "direction",
             "data_nature", "is_quarterly", "is_active",
             "campuses", "aliases", "formula", "description",
+            "target_mode", "target_value",
         ]
 
 

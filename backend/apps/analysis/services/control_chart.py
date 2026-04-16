@@ -6,12 +6,12 @@
 - P Chart (Proportion): 二項比率資料，含變動管制限
 - U Chart (Rate): Poisson 密度資料，含變動管制限
 
-Western Electric Rules:
-- Rule 1: 單點超出 ±3σ (alert)
-- Rule 2: 單點超出 ±2σ (warning)
-- Rule 3: 連續 7 點在 CL 同側 (warning)
-- Rule 4: 連續 7 點遞增或遞減 (warning)
-- Rule 5: 連續 3 點中有 2 點在 ±2σ 外 (warning)
+Western Electric Rules（依吳文祥教授 SPC 範本術語）：
+- Rule 1: 單點超出 ±3σ 管制界限（失控，alert）
+- Rule 2: 單點超出 ±2σ 警戒線（warning）
+- Rule 3: 連續 7 點在 CL 同側（warning）
+- Rule 4: 連續 7 點遞增或遞減（warning）
+- Rule 5: 連續 3 點中有 2 點超出 ±2σ 警戒線（快失控，warning）
 """
 from __future__ import annotations
 
@@ -106,13 +106,19 @@ def select_chart_type(data_points: list[MonthlyDataPoint], data_nature: DataNatu
     return "I-MR"
 
 
-def compute_imr_chart_params(data_points: list[MonthlyDataPoint]) -> ControlChartParams | None:
-    """I-MR 管制圖：UCL = X̄ + 2.66 × MR̄"""
+def compute_imr_chart_params(
+    data_points: list[MonthlyDataPoint],
+    target_value: float | None = None,
+) -> ControlChartParams | None:
+    """I-MR 管制圖：UCL = X̄ + 2.66 × MR̄
+
+    挑戰平均值模式：若提供 target_value，則 CL 改為 target_value（σ 仍由 MR̄ 推導）。
+    """
     values = np.array([dp.value for dp in data_points if dp.value is not None], dtype=np.float64)
     if len(values) < MIN_DATA_POINTS:
         return None
 
-    cl = float(np.mean(values))
+    cl = float(target_value) if target_value is not None else float(np.mean(values))
     mrs = np.abs(np.diff(values))
     mr_bar = float(np.mean(mrs))
     sigma = mr_bar / D2
@@ -128,8 +134,14 @@ def compute_imr_chart_params(data_points: list[MonthlyDataPoint]) -> ControlChar
     return ControlChartParams(chart_type="I-MR", cl=cl, ucl=ucl, lcl=lcl, sigma=sigma, ucl2=ucl2, lcl2=lcl2, n=len(values))
 
 
-def compute_p_chart_params(data_points: list[MonthlyDataPoint]) -> ControlChartParams | None:
-    """P Chart: p̄ = Σd_i / Σn_i, UCL_i = p̄ + 3√(p̄(1-p̄)/n_i)"""
+def compute_p_chart_params(
+    data_points: list[MonthlyDataPoint],
+    target_value: float | None = None,
+) -> ControlChartParams | None:
+    """P Chart: p̄ = Σd_i / Σn_i, UCL_i = p̄ + 3√(p̄(1-p̄)/n_i)
+
+    挑戰平均值模式：target_value 為百分比 (0~100)，套用後 σ 以目標 p 重算。
+    """
     with_nd = [
         dp for dp in data_points
         if dp.value is not None and dp.numerator is not None
@@ -140,7 +152,13 @@ def compute_p_chart_params(data_points: list[MonthlyDataPoint]) -> ControlChartP
 
     total_num = sum(dp.numerator for dp in with_nd)
     total_den = sum(dp.denominator for dp in with_nd)
-    p_bar = total_num / total_den
+    computed_p = total_num / total_den
+
+    # target_value 是百分比 (0~100)，需轉回比例 (0~1)
+    if target_value is not None and 0 <= target_value <= 100:
+        p_bar = target_value / 100.0
+    else:
+        p_bar = computed_p
     cl = p_bar * 100
 
     variable_limits = []
@@ -167,8 +185,14 @@ def compute_p_chart_params(data_points: list[MonthlyDataPoint]) -> ControlChartP
     )
 
 
-def compute_u_chart_params(data_points: list[MonthlyDataPoint]) -> ControlChartParams | None:
-    """U Chart: ū = Σc_i / Σn_i, UCL_i = ū + 3√(ū/n_i)"""
+def compute_u_chart_params(
+    data_points: list[MonthlyDataPoint],
+    target_value: float | None = None,
+) -> ControlChartParams | None:
+    """U Chart: ū = Σc_i / Σn_i, UCL_i = ū + 3√(ū/n_i)
+
+    挑戰平均值模式：target_value 為千分比 (‰)，套用後 σ 以目標 u 重算。
+    """
     with_nd = [
         dp for dp in data_points
         if dp.value is not None and dp.numerator is not None
@@ -179,7 +203,13 @@ def compute_u_chart_params(data_points: list[MonthlyDataPoint]) -> ControlChartP
 
     total_num = sum(dp.numerator for dp in with_nd)
     total_den = sum(dp.denominator for dp in with_nd)
-    u_bar = total_num / total_den
+    computed_u = total_num / total_den
+
+    # target_value 是千分比 (‰)，需轉回每單位率
+    if target_value is not None and target_value > 0:
+        u_bar = target_value / 1000.0
+    else:
+        u_bar = computed_u
     cl = u_bar * 1000
 
     variable_limits = []
@@ -209,13 +239,14 @@ def compute_u_chart_params(data_points: list[MonthlyDataPoint]) -> ControlChartP
 def compute_control_chart_params(
     data_points: list[MonthlyDataPoint],
     chart_type: ChartType = "I-MR",
+    target_value: float | None = None,
 ) -> ControlChartParams | None:
     """根據圖表類型計算管制圖參數"""
     if chart_type == "P":
-        return compute_p_chart_params(data_points)
+        return compute_p_chart_params(data_points, target_value=target_value)
     elif chart_type == "U":
-        return compute_u_chart_params(data_points)
-    return compute_imr_chart_params(data_points)
+        return compute_u_chart_params(data_points, target_value=target_value)
+    return compute_imr_chart_params(data_points, target_value=target_value)
 
 
 def detect_control_chart_anomalies(
@@ -249,14 +280,14 @@ def detect_control_chart_anomalies(
                 anomalies.append(AnomalyResult(
                     mechanism="control_chart", rule="rule1_above_ucl",
                     severity="alert", direction="unfavorable",
-                    message=f"超出管制上限 (UCL={ucl:.2f})",
+                    message=f"超出 3σ 管制上限 (失控, UCL={ucl:.2f})",
                     value=value, reference_value=ucl, year=dp.year, month=dp.month,
                 ))
             elif direction == "higher":
                 anomalies.append(AnomalyResult(
                     mechanism="control_chart", rule="rule1_above_ucl_favorable",
                     severity="excellent", direction="favorable",
-                    message="顯著高於管制上限，表現優異",
+                    message="顯著高於 3σ 管制上限，表現優異",
                     value=value, reference_value=ucl, year=dp.year, month=dp.month,
                 ))
 
@@ -265,14 +296,14 @@ def detect_control_chart_anomalies(
                 anomalies.append(AnomalyResult(
                     mechanism="control_chart", rule="rule1_below_lcl",
                     severity="alert", direction="unfavorable",
-                    message=f"低於管制下限 (LCL={lcl:.2f})",
+                    message=f"低於 3σ 管制下限 (失控, LCL={lcl:.2f})",
                     value=value, reference_value=lcl, year=dp.year, month=dp.month,
                 ))
             elif direction == "lower":
                 anomalies.append(AnomalyResult(
                     mechanism="control_chart", rule="rule1_below_lcl_favorable",
                     severity="excellent", direction="favorable",
-                    message="顯著低於管制下限，表現優異",
+                    message="顯著低於 3σ 管制下限，表現優異",
                     value=value, reference_value=lcl, year=dp.year, month=dp.month,
                 ))
 
@@ -412,7 +443,7 @@ def _detect_two_of_three(
             anomalies.append(AnomalyResult(
                 mechanism="control_chart", rule="rule5_2of3_above",
                 severity="warning", direction="unfavorable",
-                message=f"3 點中 {above_count} 點超出 2σ 上方",
+                message=f"連續 3 點中 {above_count} 點超出 2σ 警戒線上方 (快失控)",
                 value=values[2],
                 reference_value=vl.ucl2 if vl else params.ucl2,
                 year=window[2].year, month=window[2].month,
@@ -423,7 +454,7 @@ def _detect_two_of_three(
             anomalies.append(AnomalyResult(
                 mechanism="control_chart", rule="rule5_2of3_below",
                 severity="warning", direction="unfavorable",
-                message=f"3 點中 {below_count} 點低於 2σ 下方",
+                message=f"連續 3 點中 {below_count} 點低於 2σ 警戒線下方 (快失控)",
                 value=values[2],
                 reference_value=vl.lcl2 if vl else params.lcl2,
                 year=window[2].year, month=window[2].month,

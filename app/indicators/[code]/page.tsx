@@ -13,6 +13,7 @@ import { YearOverlayChart } from '@/components/charts/YearOverlayChart';
 import { YearCompareBar } from '@/components/charts/YearCompareBar';
 import { BenchmarkBar } from '@/components/charts/BenchmarkBar';
 import { DataTable } from '@/components/detail/DataTable';
+import { TargetPanel } from '@/components/detail/TargetPanel';
 import { PeriodToggle } from '@/components/dashboard/PeriodToggle';
 import { aggregateToQuarterly } from '@/lib/aggregation';
 import { ArrowLeft, AlertTriangle, TrendingUp, Users, ChevronDown, ChevronUp } from 'lucide-react';
@@ -42,6 +43,8 @@ export default function IndicatorDetailPage() {
     status: string; anomalies: AnomalyResultType[]; controlChart: ControlChartParams | null; peerValue: number | null;
   } | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(true);
+  // 挑戰目標模式變更後用於觸發重新載入分析
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!code || !campus) return;
@@ -63,7 +66,7 @@ export default function IndicatorDetailPage() {
         console.error('Failed to load detail:', err);
       })
       .finally(() => setLoadingDetail(false));
-  }, [code, campus]);
+  }, [code, campus, reloadKey]);
 
   // 季度模式：額外載入季度分析（管制圖 + 異常偵測）
   useEffect(() => {
@@ -199,6 +202,13 @@ export default function IndicatorDetailPage() {
       {uniqueAnomalies.size > 0 && (
         <AnomalyPanel anomalies={Array.from(uniqueAnomalies.values())} isQuarterly={effectiveIsQuarterly} />
       )}
+
+      {/* 挑戰平均值模式設定 */}
+      <TargetPanel
+        code={meta.code}
+        unit={meta.unit}
+        onChange={() => setReloadKey(k => k + 1)}
+      />
 
       {/* 管制圖 */}
       {controlChart && (controlChart.sigma > 0 || (controlChart.variableLimits && controlChart.variableLimits.length > 0)) && (

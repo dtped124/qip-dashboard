@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 
+from apps.indicators.constants import SKIP_SPC_INDICATORS
 from apps.indicators.models import (
     Alert,
     DataPoint,
@@ -158,11 +159,12 @@ def run_post_import_analysis(parse_result: ParseResult, valid_codes: set[str]) -
             elif campus == "竹東":
                 peer_value = tcpi.district_hospital
 
-        # Run analysis (HA10 經營管理指標不使用管制圖)
-        skip_cc = code.startswith("HA10")
+        # Run analysis（依「管制圖判定」文件，純計數型指標不畫管制圖）
+        skip_cc = code in SKIP_SPC_INDICATORS
+        target = indicator.target_value if indicator.target_mode and indicator.target_value is not None else None
         result = analyze_indicator(
             monthly_data, peer_value, indicator.direction, indicator.data_nature,
-            skip_control_chart=skip_cc,
+            skip_control_chart=skip_cc, target_value=target,
         )
 
         # Clear old alerts for this indicator+campus

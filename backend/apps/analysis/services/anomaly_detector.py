@@ -38,8 +38,12 @@ def analyze_indicator(
     direction: str,
     data_nature: str = "continuous",
     skip_control_chart: bool = False,
+    target_value: float | None = None,
 ) -> AnalysisResult:
-    """三重異常偵測引擎"""
+    """三重異常偵測引擎
+
+    target_value: 啟用挑戰平均值模式時，由呼叫端傳入目標值（顯示單位：% / ‰ / 原值）。
+    """
     anomalies: list[AnomalyResult] = []
 
     sorted_data = sorted(
@@ -55,7 +59,7 @@ def analyze_indicator(
     if not skip_control_chart:
         recent_24 = sorted_data[-25:]
         chart_type = select_chart_type(recent_24, data_nature)
-        control_chart = compute_control_chart_params(recent_24, chart_type)
+        control_chart = compute_control_chart_params(recent_24, chart_type, target_value=target_value)
         if control_chart:
             cc_anomalies = detect_control_chart_anomalies(sorted_data, control_chart, direction)
             anomalies.extend(cc_anomalies)

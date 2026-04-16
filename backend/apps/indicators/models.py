@@ -85,6 +85,10 @@ class Indicator(models.Model):
         choices=[("manual", "手動填報"), ("case_list", "個案清單審查")],
         default="manual",
     )
+    # 挑戰平均值模式（吳文祥教授 SPC 範本同名功能）
+    # 啟用後以 target_value 取代統計算出的 p̄/ū/X̄ 作為 CL，UCL/LCL 隨之以目標值重新計算
+    target_mode = models.BooleanField("挑戰平均值模式", default=False)
+    target_value = models.FloatField("挑戰目標值", null=True, blank=True)
     created_at = models.DateTimeField("建立時間", auto_now_add=True)
     updated_at = models.DateTimeField("更新時間", auto_now=True)
 

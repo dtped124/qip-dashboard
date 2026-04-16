@@ -161,26 +161,26 @@ export function computeMonthStatus(
 
       // Rule 1
       if (value > ucl && (direction === 'lower' || direction === 'monitor')) {
-        anomalies.push({ mechanism: 'control_chart', rule: 'rule1', severity: 'alert', direction: 'unfavorable', message: '超出 UCL', value, referenceValue: ucl, year: targetYear, month: targetMonth });
+        anomalies.push({ mechanism: 'control_chart', rule: 'rule1', severity: 'alert', direction: 'unfavorable', message: '超出 3σ 管制上限 (失控)', value, referenceValue: ucl, year: targetYear, month: targetMonth });
       }
       if (value < lcl && lcl > 0 && (direction === 'higher' || direction === 'monitor')) {
-        anomalies.push({ mechanism: 'control_chart', rule: 'rule1', severity: 'alert', direction: 'unfavorable', message: '低於 LCL', value, referenceValue: lcl, year: targetYear, month: targetMonth });
+        anomalies.push({ mechanism: 'control_chart', rule: 'rule1', severity: 'alert', direction: 'unfavorable', message: '低於 3σ 管制下限 (失控)', value, referenceValue: lcl, year: targetYear, month: targetMonth });
       }
 
       // Rule 2
       if (value > ucl2 && value <= ucl && (direction === 'lower' || direction === 'monitor')) {
-        anomalies.push({ mechanism: 'control_chart', rule: 'rule2', severity: 'warning', direction: 'unfavorable', message: '超出 2σ', value, referenceValue: ucl2, year: targetYear, month: targetMonth });
+        anomalies.push({ mechanism: 'control_chart', rule: 'rule2', severity: 'warning', direction: 'unfavorable', message: '超出 2σ 警戒線', value, referenceValue: ucl2, year: targetYear, month: targetMonth });
       }
       if (value < lcl2 && value >= lcl && lcl2 > 0 && (direction === 'higher' || direction === 'monitor')) {
-        anomalies.push({ mechanism: 'control_chart', rule: 'rule2', severity: 'warning', direction: 'unfavorable', message: '低於 2σ', value, referenceValue: lcl2, year: targetYear, month: targetMonth });
+        anomalies.push({ mechanism: 'control_chart', rule: 'rule2', severity: 'warning', direction: 'unfavorable', message: '低於 2σ 警戒線', value, referenceValue: lcl2, year: targetYear, month: targetMonth });
       }
 
       // Favorable checks
       if (value > ucl && direction === 'higher') {
-        anomalies.push({ mechanism: 'control_chart', severity: 'excellent', direction: 'favorable', message: '顯著高於上限', value, referenceValue: ucl, year: targetYear, month: targetMonth });
+        anomalies.push({ mechanism: 'control_chart', severity: 'excellent', direction: 'favorable', message: '顯著高於 3σ 管制上限', value, referenceValue: ucl, year: targetYear, month: targetMonth });
       }
       if (value < lcl && lcl > 0 && direction === 'lower') {
-        anomalies.push({ mechanism: 'control_chart', severity: 'excellent', direction: 'favorable', message: '顯著低於下限', value, referenceValue: lcl, year: targetYear, month: targetMonth });
+        anomalies.push({ mechanism: 'control_chart', severity: 'excellent', direction: 'favorable', message: '顯著低於 3σ 管制下限', value, referenceValue: lcl, year: targetYear, month: targetMonth });
       }
     }
   }

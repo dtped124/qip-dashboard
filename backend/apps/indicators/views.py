@@ -26,6 +26,7 @@ from apps.analysis.services.control_chart import (
 )
 from apps.analysis.services.anomaly_detector import analyze_indicator
 from apps.analysis.services.aggregation import aggregate_to_quarterly
+from .constants import SKIP_SPC_INDICATORS
 
 
 @api_view(["GET"])
@@ -47,15 +48,85 @@ def indicator_list(request):
     return Response({"data": indicators, "total": len(indicators)})
 
 
-@api_view(["GET"])
+@api_view(["GET", "PATCH"])
 def indicator_detail(request, code: str):
-    """GET /api/v1/indicators/<code>/ — 指標詳情"""
+    """
+    GET   /api/v1/indicators/<code>/ — 指標詳情
+    PATCH /api/v1/indicators/<code>/ — 更新指標設定（目前支援 target_mode / target_value）
+    """
     try:
         ind = Indicator.objects.get(code=code)
     except Indicator.DoesNotExist:
         return Response({"error": {"code": "NOT_FOUND", "message": f"指標 {code} 不存在"}}, status=404)
 
+    if request.method == "PATCH":
+        body = request.data if hasattr(request, "data") else {}
+        if "target_mode" in body:
+            ind.target_mode = bool(body["target_mode"])
+        if "target_value" in body:
+            tv = body["target_value"]
+            if tv in (None, "", False):
+                ind.target_value = None
+            else:
+                try:
+                    ind.target_value = float(tv)
+                except (TypeError, ValueError):
+                    return Response(
+                        {"error": {"code": "BAD_REQUEST", "message": "target_value 必須為數字"}},
+                        status=400,
+                    )
+        ind.save(update_fields=["target_mode", "target_value", "updated_at"])
+
+        # 更新後立刻刷新該指標的 alerts，讓儀表板即時反映
+        _refresh_indicator_alerts(ind)
+
     return Response(IndicatorSerializer(ind).data)
+
+
+def _refresh_indicator_alerts(ind: Indicator) -> None:
+    """重算該指標所有院區的 alerts（target_mode 變更後同步）"""
+    campuses = (
+        DataPoint.objects.filter(indicator_id=ind.code)
+        .values_list("campus", flat=True).distinct()
+    )
+    target = ind.target_value if ind.target_mode and ind.target_value is not None else None
+    skip_cc = ind.code in SKIP_SPC_INDICATORS
+
+    for campus in campuses:
+        dps = DataPoint.objects.filter(
+            indicator_id=ind.code, campus=campus,
+        ).order_by("year", "month")
+        monthly_data = [
+            MonthlyDataPoint(
+                year=dp.year, month=dp.month, value=dp.value,
+                numerator=dp.numerator, denominator=dp.denominator,
+            )
+            for dp in dps
+        ]
+        if not monthly_data:
+            continue
+
+        peer_value = _get_peer_value(ind.code, campus)
+        result = analyze_indicator(
+            monthly_data, peer_value, ind.direction, ind.data_nature,
+            skip_control_chart=skip_cc, target_value=target,
+        )
+
+        Alert.objects.filter(indicator_id=ind.code, campus=campus).delete()
+        for anomaly in result.anomalies:
+            if (anomaly.direction == "unfavorable"
+                    and anomaly.severity in ("alert", "warning", "watch")
+                    and anomaly.year and anomaly.month):
+                Alert.objects.create(
+                    indicator_id=ind.code,
+                    campus=campus,
+                    severity=anomaly.severity,
+                    mechanism=anomaly.mechanism,
+                    rule=anomaly.rule,
+                    message=anomaly.message,
+                    year=anomaly.year,
+                    month=anomaly.month,
+                )
 
 
 @api_view(["GET"])
@@ -150,10 +221,11 @@ def indicator_analysis(request, code: str):
     # Get peer value
     peer_value = _get_peer_value(code, campus)
 
-    # Run analysis (HA10 經營管理指標不使用管制圖)
-    skip_cc = code.startswith("HA10")
+    # Run analysis（依「管制圖判定」文件，純計數型指標不畫管制圖）
+    skip_cc = code in SKIP_SPC_INDICATORS
+    target = ind.target_value if ind.target_mode and ind.target_value is not None else None
     result = analyze_indicator(monthly_data, peer_value, ind.direction, ind.data_nature,
-                                skip_control_chart=skip_cc)
+                                skip_control_chart=skip_cc, target_value=target)
 
     # Serialize control chart
     cc_data = None
@@ -168,6 +240,8 @@ def indicator_analysis(request, code: str):
             "ucl2": cc.ucl2,
             "lcl2": cc.lcl2,
             "n": cc.n,
+            "target_mode": bool(target is not None),
+            "target_value": target,
             "variable_limits": [
                 {
                     "year": vl.year, "month": vl.month,
