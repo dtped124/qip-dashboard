@@ -515,15 +515,28 @@ def _validate_outliers(result: ParseResult, nd_computed_keys: set[str]) -> None:
                 )
 
 
+def _weighted_year_avg(dps: list) -> float | None:
+    """分母加權平均：sum(value×d)/sum(d)，等價於 sum(n)/sum(d)×scale。
+    若無分母資訊則退回算術平均。"""
+    valid = [dp for dp in dps if dp.value is not None]
+    if not valid:
+        return None
+    with_den = [dp for dp in valid if dp.denominator and dp.denominator > 0]
+    if with_den:
+        den_sum = sum(dp.denominator for dp in with_den)
+        return sum(dp.value * dp.denominator for dp in with_den) / den_sum
+    return sum(dp.value for dp in valid) / len(valid)
+
+
 def _recalculate_year_averages(result: ParseResult) -> None:
     """Recalculate year averages from monthly data (after outlier correction)."""
     for summary in result.yearly_summaries:
-        year_points = [
-            dp.value for dp in result.data_points
+        year_dps = [
+            dp for dp in result.data_points
             if dp.indicator_code == summary.indicator_code
             and dp.campus == summary.campus
             and dp.year == summary.year
-            and dp.value is not None
         ]
-        if year_points:
-            summary.average = sum(year_points) / len(year_points)
+        avg = _weighted_year_avg(year_dps)
+        if avg is not None:
+            summary.average = avg
