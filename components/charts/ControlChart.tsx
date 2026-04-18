@@ -41,8 +41,9 @@ const CHART_TYPE_LABELS: Record<string, string> = {
 };
 
 export function ControlChart({ dataPoints, controlChart, anomalies, direction, unit, peerValue, isQuarterly = false }: Props) {
-  const { cl, ucl, lcl, ucl2, lcl2, sigma, chartType, variableLimits } = controlChart;
+  const { cl, ucl, lcl, ucl2, lcl2, sigma, chartType, variableLimits, targetMode } = controlChart;
   const hasVariableLimits = variableLimits && variableLimits.length > 0;
+  const isTargetMode = !!targetMode;
 
   // 建立變動限查詢表
   const limitsMap = new Map<string, VariableLimit>();
@@ -165,8 +166,13 @@ export function ControlChart({ dataPoints, controlChart, anomalies, direction, u
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <div className="text-xs text-gray-500">
-          {chartLabel} | {statsLabel}
+        <div className="text-xs text-gray-500 flex items-center gap-2">
+          <span>{chartLabel} | {statsLabel}</span>
+          {isTargetMode && (
+            <span className="text-purple-700 bg-purple-50 px-2 py-0.5 rounded font-medium">
+              挑戰目標模式
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3">
           {canExpand && (
@@ -224,12 +230,17 @@ export function ControlChart({ dataPoints, controlChart, anomalies, direction, u
             </>
           )}
 
-          {/* 管制線 — CL 始終為固定水平線 */}
+          {/* 管制線 — CL 始終為固定水平線（挑戰目標模式以紫色標示） */}
           <ReferenceLine
             y={cl}
-            stroke={CONTROL_CHART_COLORS.cl}
+            stroke={isTargetMode ? '#9333EA' : CONTROL_CHART_COLORS.cl}
             strokeDasharray="5 5"
-            label={{ value: `CL ${cl.toFixed(2)}`, position: 'right', fontSize: 10, fill: '#6B7280' }}
+            label={{
+              value: isTargetMode ? `目標 ${cl.toFixed(2)}` : `CL ${cl.toFixed(2)}`,
+              position: 'right',
+              fontSize: 10,
+              fill: isTargetMode ? '#9333EA' : '#6B7280',
+            }}
           />
 
           {/* 固定管制限（I-MR）*/}

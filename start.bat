@@ -21,6 +21,7 @@ timeout /t 8 /nobreak >nul
 
 echo [3/4] Running migrations and seeding data...
 docker-compose exec api python manage.py migrate --noinput
+docker-compose exec api python manage.py seed_admin
 docker-compose exec api python manage.py seed_entry_base
 docker-compose exec api python manage.py seed_indicators
 echo.

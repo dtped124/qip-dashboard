@@ -26,6 +26,7 @@ from apps.analysis.services.control_chart import (
 )
 from apps.analysis.services.anomaly_detector import analyze_indicator
 from apps.analysis.services.aggregation import aggregate_to_quarterly
+from .constants import SKIP_SPC_INDICATORS
 
 
 @api_view(["GET"])
@@ -47,15 +48,85 @@ def indicator_list(request):
     return Response({"data": indicators, "total": len(indicators)})
 
 
-@api_view(["GET"])
+@api_view(["GET", "PATCH"])
 def indicator_detail(request, code: str):
-    """GET /api/v1/indicators/<code>/ — 指標詳情"""
+    """
+    GET   /api/v1/indicators/<code>/ — 指標詳情
+    PATCH /api/v1/indicators/<code>/ — 更新指標設定（目前支援 target_mode / target_value）
+    """
     try:
         ind = Indicator.objects.get(code=code)
     except Indicator.DoesNotExist:
         return Response({"error": {"code": "NOT_FOUND", "message": f"指標 {code} 不存在"}}, status=404)
 
+    if request.method == "PATCH":
+        body = request.data if hasattr(request, "data") else {}
+        if "target_mode" in body:
+            ind.target_mode = bool(body["target_mode"])
+        if "target_value" in body:
+            tv = body["target_value"]
+            if tv in (None, "", False):
+                ind.target_value = None
+            else:
+                try:
+                    ind.target_value = float(tv)
+                except (TypeError, ValueError):
+                    return Response(
+                        {"error": {"code": "BAD_REQUEST", "message": "target_value 必須為數字"}},
+                        status=400,
+                    )
+        ind.save(update_fields=["target_mode", "target_value", "updated_at"])
+
+        # 更新後立刻刷新該指標的 alerts，讓儀表板即時反映
+        _refresh_indicator_alerts(ind)
+
     return Response(IndicatorSerializer(ind).data)
+
+
+def _refresh_indicator_alerts(ind: Indicator) -> None:
+    """重算該指標所有院區的 alerts（target_mode 變更後同步）"""
+    campuses = (
+        DataPoint.objects.filter(indicator_id=ind.code)
+        .values_list("campus", flat=True).distinct()
+    )
+    target = ind.target_value if ind.target_mode and ind.target_value is not None else None
+    skip_cc = ind.code in SKIP_SPC_INDICATORS
+
+    for campus in campuses:
+        dps = DataPoint.objects.filter(
+            indicator_id=ind.code, campus=campus,
+        ).order_by("year", "month")
+        monthly_data = [
+            MonthlyDataPoint(
+                year=dp.year, month=dp.month, value=dp.value,
+                numerator=dp.numerator, denominator=dp.denominator,
+            )
+            for dp in dps
+        ]
+        if not monthly_data:
+            continue
+
+        peer_value = _get_peer_value(ind.code, campus)
+        result = analyze_indicator(
+            monthly_data, peer_value, ind.direction, ind.data_nature,
+            skip_control_chart=skip_cc, target_value=target,
+        )
+
+        Alert.objects.filter(indicator_id=ind.code, campus=campus).delete()
+        for anomaly in result.anomalies:
+            if (anomaly.direction == "unfavorable"
+                    and anomaly.severity in ("alert", "warning", "watch")
+                    and anomaly.year and anomaly.month):
+                Alert.objects.create(
+                    indicator_id=ind.code,
+                    campus=campus,
+                    severity=anomaly.severity,
+                    mechanism=anomaly.mechanism,
+                    rule=anomaly.rule,
+                    message=anomaly.message,
+                    year=anomaly.year,
+                    month=anomaly.month,
+                )
 
 
 @api_view(["GET"])
@@ -150,10 +221,11 @@ def indicator_analysis(request, code: str):
     # Get peer value
     peer_value = _get_peer_value(code, campus)
 
-    # Run analysis (HA10 經營管理指標不使用管制圖)
-    skip_cc = code.startswith("HA10")
+    # Run analysis（依「管制圖判定」文件，純計數型指標不畫管制圖）
+    skip_cc = code in SKIP_SPC_INDICATORS
+    target = ind.target_value if ind.target_mode and ind.target_value is not None else None
     result = analyze_indicator(monthly_data, peer_value, ind.direction, ind.data_nature,
-                                skip_control_chart=skip_cc)
+                                skip_control_chart=skip_cc, target_value=target)
 
     # Serialize control chart
     cc_data = None
@@ -168,6 +240,8 @@ def indicator_analysis(request, code: str):
             "ucl2": cc.ucl2,
             "lcl2": cc.lcl2,
             "n": cc.n,
+            "target_mode": bool(target is not None),
+            "target_value": target,
             "variable_limits": [
                 {
                     "year": vl.year, "month": vl.month,
@@ -238,7 +312,7 @@ def dashboard_bulk(request):
     codes = [ind.code for ind in campus_indicators]
     all_dps = DataPoint.objects.filter(
         indicator_id__in=codes, campus=campus,
-    ).order_by("year", "month").values("indicator_id", "year", "month", "value")
+    ).order_by("year", "month").values("indicator_id", "year", "month", "value", "numerator", "denominator")
 
     # Group by indicator
     dp_map: dict[str, list[dict]] = {}
@@ -381,14 +455,19 @@ def dashboard_bulk(request):
                 if "peer_comparison" not in mechanisms:
                     mechanisms.append("peer_comparison")
 
-        # Year average
+        # Year average (分母加權)
         year_avg = None
         year_label = None
         if valid_dps:
             latest_year = max(dp["year"] for dp in valid_dps)
-            year_values = [dp["value"] for dp in dps if dp["value"] is not None and dp["year"] == latest_year]
-            if year_values:
-                year_avg = sum(year_values) / len(year_values)
+            year_dps = [dp for dp in dps if dp["value"] is not None and dp["year"] == latest_year]
+            if year_dps:
+                with_den = [dp for dp in year_dps if dp.get("denominator") and dp["denominator"] > 0]
+                if with_den:
+                    den_sum = sum(dp["denominator"] for dp in with_den)
+                    year_avg = sum(dp["value"] * dp["denominator"] for dp in with_den) / den_sum
+                else:
+                    year_avg = sum(dp["value"] for dp in year_dps) / len(year_dps)
                 year_label = f"{latest_year}"
 
         # Trend
@@ -534,3 +613,55 @@ def tcpi_benchmarks(request):
         saved += 1
 
     return Response({"saved": saved, "total": len(items)})
+
+
+def export_all_data(request):
+    """GET /api/v1/export/ — 匯出全部資料供 QIP Portable 匯入"""
+    from apps.imports.models import ImportLog, MatchingRule
+
+    indicators = list(Indicator.objects.filter(is_active=True).values(
+        "code", "name", "category", "unit", "direction",
+        "is_active", "source", "aliases", "campuses",
+        "formula", "description", "has_denominator",
+        "entry_mode", "target_mode", "target_value",
+    ))
+
+    data_points = list(DataPoint.objects.all().values(
+        "indicator_id", "campus", "year", "month",
+        "value", "numerator", "denominator",
+    ))
+
+    yearly_summaries = list(YearlySummary.objects.all().values(
+        "indicator_id", "campus", "year",
+        "average", "benchmark_regional", "benchmark_district",
+    ))
+
+    tcpi_benchmarks = list(TCPIBenchmark.objects.all().values(
+        "indicator_id", "tcpi_name", "year",
+        "medical_center", "regional_hospital", "district_hospital",
+    ))
+
+    import_logs = list(ImportLog.objects.all().values(
+        "id", "file_name", "file_size", "sheets_processed",
+        "data_points_new", "data_points_updated", "data_points_unchanged",
+        "errors", "created_at",
+    ))
+    for log in import_logs:
+        log["created_at"] = log["created_at"].isoformat()
+
+    matching_rules = list(MatchingRule.objects.all().values(
+        "excel_name", "normalized_name", "indicator_code",
+    ))
+
+    from datetime import datetime, timezone as tz
+    return JsonResponse({
+        "version": 1,
+        "exportedAt": datetime.now(tz.utc).isoformat(),
+        "indicators": indicators,
+        "dataPoints": data_points,
+        "yearlySummaries": yearly_summaries,
+        "tcpiBenchmarks": tcpi_benchmarks,
+        "importLogs": import_logs,
+        "matchingRules": matching_rules,
+    })
+

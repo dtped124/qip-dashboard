@@ -43,7 +43,7 @@ INDICATOR_META: dict[str, dict] = {
     # 整體照護 — binomial_rate
     "HA01-01": {"name": "住院死亡率(含病危自動出院)", "category": "整體照護", "unit": "percent", "is_quarterly": False, "direction": "lower", "campuses": ALL_CAMPUSES, "aliases": ["住院死亡千分率"], "data_nature": "binomial_rate"},
     "HA01-02": {"name": "出院14天內因相同或相關病情非計畫性再住院率", "category": "整體照護", "unit": "percent", "is_quarterly": False, "direction": "lower", "campuses": ALL_CAMPUSES, "aliases": ["非計畫再住院率", "14天再住院"], "data_nature": "binomial_rate"},
-    "HA01-03": {"name": "急性病床住院案件住院日數超過30日比率", "category": "整體照護", "unit": "percent", "is_quarterly": True, "direction": "lower", "campuses": ALL_CAMPUSES, "aliases": ["住院超過30日", "住院日數超過三十日", "住院日數超過30日", "住院超過30天"], "data_nature": "binomial_rate"},
+    "HA01-03": {"name": "急性病床住院案件住院日數超過30日比率", "category": "整體照護", "unit": "percent", "is_quarterly": False, "direction": "lower", "campuses": ALL_CAMPUSES, "aliases": ["住院超過30日", "住院日數超過三十日", "住院日數超過30日", "住院超過30天"], "data_nature": "binomial_rate"},
 
     # 加護照護 — percent: binomial_rate, permille: poisson_rate
     "HA02-01": {"name": "48小時(含)內加護病房重返率", "category": "加護照護", "unit": "percent", "is_quarterly": False, "direction": "lower", "campuses": ALL_CAMPUSES, "aliases": ["ICU重返率", "加護病房重返"], "data_nature": "binomial_rate"},
@@ -98,6 +98,20 @@ INDICATOR_META: dict[str, dict] = {
     "HA10-04": {"name": "急性一般病床開放率", "category": "經營管理", "unit": "percent", "is_quarterly": False, "direction": "monitor", "campuses": ALL_CAMPUSES, "aliases": ["病床開放率"], "data_nature": "binomial_rate"},
     "HA10-09": {"name": "急性一般病床全日平均護病比", "category": "經營管理", "unit": "ratio", "is_quarterly": False, "direction": "lower", "campuses": ALL_CAMPUSES, "aliases": ["護病比"], "data_nature": "continuous"},
 }
+
+# 不計算管制圖的指標清單
+# 依「QIP 管制圖判定」(Excel: 管制圖判定.xlsx, KPI 工作表) 之 SPC 欄位：
+# 文件未指定 SPC 圖型者（純計數/比率型，無合適的傳統管制圖）。
+# 注意：HA10-04 (急性一般病床開放率) 文件建議 P-chart，故不在此清單。
+#       HA06-31 (安寧個案數)、HA08-01 (藥物不良反應通報) 文件未指定但
+#       目前以 I-MR 處理，暫不加入跳過清單。
+SKIP_SPC_INDICATORS: set[str] = {
+    "HA10-01",  # 異常事件通報件數
+    "HA10-02",  # 醫院員工遭受暴力事件數
+    "HA10-03",  # 醫院員工發生職業災害件數
+    "HA10-09",  # 急性一般病床全日平均護病比
+}
+
 
 # 110年無指標代碼，需透過名稱比對
 NAME_TO_CODE: dict[str, str] = {

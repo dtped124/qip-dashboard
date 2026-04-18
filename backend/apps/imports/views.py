@@ -1,3 +1,5 @@
+import json
+
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from .models import ImportLog
@@ -40,3 +42,50 @@ def import_logs(request):
         "errors", "created_at",
     )
     return JsonResponse({"data": list(logs), "total": ImportLog.objects.count()})
+
+
+@csrf_exempt
+def correct_datapoint(request):
+    """POST /api/v1/imports/correct-datapoint/ — 修正警告資料點並移除對應錯誤訊息"""
+    if request.method != "POST":
+        return JsonResponse({"error": "METHOD_NOT_ALLOWED"}, status=405)
+
+    try:
+        body = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "BAD_REQUEST"}, status=400)
+
+    indicator_code = body.get("indicator_code")
+    campus = body.get("campus")
+    year = body.get("year")
+    month = body.get("month")
+    new_value = body.get("new_value")  # None = 不改值，僅移除警告
+    log_id = body.get("log_id")
+    error_text = body.get("error_text")
+
+    if not all([indicator_code, campus, year, month, log_id]):
+        return JsonResponse({"error": "MISSING_FIELDS"}, status=400)
+
+    if new_value is not None:
+        from apps.indicators.models import DataPoint
+        try:
+            dp = DataPoint.objects.get(
+                indicator_id=indicator_code,
+                campus=campus,
+                year=int(year),
+                month=int(month),
+            )
+            dp.value = float(new_value)
+            dp.save(update_fields=["value", "updated_at"])
+        except DataPoint.DoesNotExist:
+            return JsonResponse({"error": "DATAPOINT_NOT_FOUND"}, status=404)
+
+    if error_text:
+        try:
+            log = ImportLog.objects.get(id=log_id)
+            log.errors = [e for e in (log.errors or []) if e != error_text]
+            log.save(update_fields=["errors", "updated_at"])
+        except ImportLog.DoesNotExist:
+            pass
+
+    return JsonResponse({"status": "ok"})

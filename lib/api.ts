@@ -234,6 +234,8 @@ interface AnalysisResponse {
     ucl2: number;
     lcl2: number;
     n: number;
+    target_mode?: boolean;
+    target_value?: number | null;
     variable_limits: {
       year: number;
       month: number;
@@ -285,6 +287,8 @@ export async function loadAnalysis(code: string, campus: Campus, period?: 'month
       ucl2: cc.ucl2,
       lcl2: cc.lcl2,
       n: cc.n,
+      targetMode: cc.target_mode ?? false,
+      targetValue: cc.target_value ?? null,
       variableLimits: cc.variable_limits.map(vl => ({
         year: vl.year,
         month: vl.month,
@@ -303,6 +307,54 @@ export async function loadAnalysis(code: string, campus: Campus, period?: 'month
     controlChart,
     peerValue: resp.peer_value,
   };
+}
+
+// ── Indicator meta (with target settings) ──
+
+interface IndicatorMetaResponse {
+  code: string;
+  name: string;
+  category: string;
+  unit: string;
+  direction: string;
+  data_nature: string;
+  is_quarterly: boolean;
+  is_active: boolean;
+  campuses: string[];
+  aliases: string[];
+  formula: string;
+  description: string;
+  target_mode: boolean;
+  target_value: number | null;
+}
+
+export interface IndicatorTargetState {
+  targetMode: boolean;
+  targetValue: number | null;
+}
+
+export async function loadIndicatorMeta(code: string): Promise<IndicatorTargetState> {
+  const resp = await apiFetch<IndicatorMetaResponse>(`/api/v1/indicators/${code}/`);
+  return { targetMode: resp.target_mode, targetValue: resp.target_value };
+}
+
+export async function updateIndicatorTarget(
+  code: string,
+  payload: { targetMode: boolean; targetValue: number | null },
+): Promise<IndicatorTargetState> {
+  const res = await fetch(`${API_BASE}/api/v1/indicators/${code}/`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      target_mode: payload.targetMode,
+      target_value: payload.targetValue,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`更新失敗 (${res.status}): ${await res.text()}`);
+  }
+  const data: IndicatorMetaResponse = await res.json();
+  return { targetMode: data.target_mode, targetValue: data.target_value };
 }
 
 // ── Import API ──

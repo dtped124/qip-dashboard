@@ -3,6 +3,7 @@ from . import views
 
 urlpatterns = [
     path("", views.indicator_list, name="indicator-list"),
+    path("export/", views.export_all_data, name="indicator-export"),
     path("<str:code>/", views.indicator_detail, name="indicator-detail"),
     path("<str:code>/data/", views.indicator_data, name="indicator-data"),
     path("<str:code>/alerts/", views.indicator_alerts, name="indicator-alerts"),

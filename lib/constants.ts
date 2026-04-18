@@ -77,7 +77,7 @@ export const INDICATOR_META: Record<string, Omit<IndicatorMeta, 'code'>> = {
   // 整體照護 — binomial_rate（分子=事件數 / 分母=總人次）
   'HA01-01': { name: '住院死亡率(含病危自動出院)', category: '整體照護', unit: 'percent', isQuarterly: false, direction: 'lower', isReverse: false, campuses: all3, source: 'preset', aliases: ['住院死亡千分率'], isActive: true, dataNature: 'binomial_rate' },
   'HA01-02': { name: '出院14天內因相同或相關病情非計畫性再住院率', category: '整體照護', unit: 'percent', isQuarterly: false, direction: 'lower', isReverse: false, campuses: all3, source: 'preset', aliases: ['非計畫再住院率', '14天再住院'], isActive: true, dataNature: 'binomial_rate' },
-  'HA01-03': { name: '急性病床住院案件住院日數超過30日比率', category: '整體照護', unit: 'percent', isQuarterly: true, direction: 'lower', isReverse: false, campuses: all3, source: 'preset', aliases: ['住院超過30日', '住院日數超過三十日', '住院日數超過30日', '住院超過30天'], isActive: true, dataNature: 'binomial_rate' },
+  'HA01-03': { name: '急性病床住院案件住院日數超過30日比率', category: '整體照護', unit: 'percent', isQuarterly: false, direction: 'lower', isReverse: false, campuses: all3, source: 'preset', aliases: ['住院超過30日', '住院日數超過三十日', '住院日數超過30日', '住院超過30天'], isActive: true, dataNature: 'binomial_rate' },
 
   // 加護照護 — percent: binomial_rate, permille: poisson_rate
   'HA02-01': { name: '48小時(含)內加護病房重返率', category: '加護照護', unit: 'percent', isQuarterly: false, direction: 'lower', isReverse: false, campuses: all3, source: 'preset', aliases: ['ICU重返率', '加護病房重返'], isActive: true, dataNature: 'binomial_rate' },

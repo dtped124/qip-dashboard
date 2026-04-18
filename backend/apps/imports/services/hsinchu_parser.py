@@ -21,7 +21,7 @@ import xlrd
 from openpyxl import Workbook
 
 from apps.indicators.constants import INDICATOR_META
-from .excel_parser import ParseResult, ParsedDataPoint, ParsedYearlySummary
+from .excel_parser import ParseResult, ParsedDataPoint, ParsedYearlySummary, _weighted_year_avg
 
 
 @dataclass
@@ -261,13 +261,12 @@ def _process_blocks(
 
         # Build yearly summaries
         for year in all_years:
-            year_values = [
-                dp.value for dp in result.data_points
+            year_dps = [
+                dp for dp in result.data_points
                 if dp.indicator_code == block.code
                 and dp.year == year
-                and dp.value is not None
             ]
-            avg = sum(year_values) / len(year_values) if year_values else None
+            avg = _weighted_year_avg(year_dps)
             result.yearly_summaries.append(ParsedYearlySummary(
                 indicator_code=block.code,
                 campus="新竹",
