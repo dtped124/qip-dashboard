@@ -312,7 +312,7 @@ def dashboard_bulk(request):
     codes = [ind.code for ind in campus_indicators]
     all_dps = DataPoint.objects.filter(
         indicator_id__in=codes, campus=campus,
-    ).order_by("year", "month").values("indicator_id", "year", "month", "value")
+    ).order_by("year", "month").values("indicator_id", "year", "month", "value", "numerator", "denominator")
 
     # Group by indicator
     dp_map: dict[str, list[dict]] = {}
@@ -455,14 +455,19 @@ def dashboard_bulk(request):
                 if "peer_comparison" not in mechanisms:
                     mechanisms.append("peer_comparison")
 
-        # Year average
+        # Year average (分母加權)
         year_avg = None
         year_label = None
         if valid_dps:
             latest_year = max(dp["year"] for dp in valid_dps)
-            year_values = [dp["value"] for dp in dps if dp["value"] is not None and dp["year"] == latest_year]
-            if year_values:
-                year_avg = sum(year_values) / len(year_values)
+            year_dps = [dp for dp in dps if dp["value"] is not None and dp["year"] == latest_year]
+            if year_dps:
+                with_den = [dp for dp in year_dps if dp.get("denominator") and dp["denominator"] > 0]
+                if with_den:
+                    den_sum = sum(dp["denominator"] for dp in with_den)
+                    year_avg = sum(dp["value"] * dp["denominator"] for dp in with_den) / den_sum
+                else:
+                    year_avg = sum(dp["value"] for dp in year_dps) / len(year_dps)
                 year_label = f"{latest_year}"
 
         # Trend
@@ -608,3 +613,55 @@ def tcpi_benchmarks(request):
         saved += 1
 
     return Response({"saved": saved, "total": len(items)})
+
+
+def export_all_data(request):
+    """GET /api/v1/export/ — 匯出全部資料供 QIP Portable 匯入"""
+    from apps.imports.models import ImportLog, MatchingRule
+
+    indicators = list(Indicator.objects.filter(is_active=True).values(
+        "code", "name", "category", "unit", "direction",
+        "is_active", "source", "aliases", "campuses",
+        "formula", "description", "has_denominator",
+        "entry_mode", "target_mode", "target_value",
+    ))
+
+    data_points = list(DataPoint.objects.all().values(
+        "indicator_id", "campus", "year", "month",
+        "value", "numerator", "denominator",
+    ))
+
+    yearly_summaries = list(YearlySummary.objects.all().values(
+        "indicator_id", "campus", "year",
+        "average", "benchmark_regional", "benchmark_district",
+    ))
+
+    tcpi_benchmarks = list(TCPIBenchmark.objects.all().values(
+        "indicator_id", "tcpi_name", "year",
+        "medical_center", "regional_hospital", "district_hospital",
+    ))
+
+    import_logs = list(ImportLog.objects.all().values(
+        "id", "file_name", "file_size", "sheets_processed",
+        "data_points_new", "data_points_updated", "data_points_unchanged",
+        "errors", "created_at",
+    ))
+    for log in import_logs:
+        log["created_at"] = log["created_at"].isoformat()
+
+    matching_rules = list(MatchingRule.objects.all().values(
+        "excel_name", "normalized_name", "indicator_code",
+    ))
+
+    from datetime import datetime, timezone as tz
+    return JsonResponse({
+        "version": 1,
+        "exportedAt": datetime.now(tz.utc).isoformat(),
+        "indicators": indicators,
+        "dataPoints": data_points,
+        "yearlySummaries": yearly_summaries,
+        "tcpiBenchmarks": tcpi_benchmarks,
+        "importLogs": import_logs,
+        "matchingRules": matching_rules,
+    })
+
