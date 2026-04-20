@@ -18,7 +18,7 @@ interface Props {
 }
 
 export function IndicatorCard({ indicator }: Props) {
-  const { meta, latestValue, latestMonth, status, trend, benchmarkValue, peerValue, monthlyData, yearlySummaries, anomalies } = indicator;
+  const { meta, latestValue, latestMonth, status, trend, benchmarkValue, peerValue, peerSource, monthlyData, yearlySummaries, anomalies } = indicator;
   const color = CATEGORY_COLORS[meta.category];
 
   // 找最新月份
@@ -102,7 +102,7 @@ export function IndicatorCard({ indicator }: Props) {
       <div className="flex items-center justify-between text-xs text-gray-500 pt-2 border-t border-gray-50">
         <div>
           {peerValue !== null ? (
-            <span>TCPI: {formatValue(peerValue, meta.unit)}</span>
+            <span>{peerSource === 'TCPI' ? 'TCPI' : '同儕'}: {formatValue(peerValue, meta.unit)}</span>
           ) : benchmarkValue !== null ? (
             <span>標竿: {formatValue(benchmarkValue, meta.unit)}</span>
           ) : null}

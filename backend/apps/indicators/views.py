@@ -174,8 +174,8 @@ def indicator_summaries(request, code: str):
         indicator_id=code, campus=campus
     ).order_by("year")
 
-    # Also get TCPI benchmarks
-    tcpi_list = TCPIBenchmark.objects.filter(indicator_id=code).order_by("year")
+    # Also get TCPI benchmarks — 降冪：最新年度在前（前端 lib/api.ts 預設 tcpi[0] = 最新）
+    tcpi_list = TCPIBenchmark.objects.filter(indicator_id=code).order_by("-year")
 
     return Response({
         "data": YearlySummarySerializer(summaries, many=True).data,
@@ -401,27 +401,30 @@ def dashboard_bulk(request):
         # Anomaly mechanisms (latest month only)
         mechanisms = list(set(a["mechanism"] for a in unfavorable))
 
-        # Peer/benchmark value (computed early for anomaly display)
+        # Peer/benchmark value — TCPI 優先（結構乾淨、年份與層級判定可靠），
+        # 若無 TCPI 對應再回退到 YearlySummary 的月報表標竿欄位
         peer_value = None
         peer_source = None
-        summaries = summary_map.get(code, [])
-        if summaries:
-            latest_s = summaries[-1]
-            if campus == "竹北":
-                peer_value = latest_s.get("benchmark_regional")
+        tcpi = tcpi_map.get(code)
+        if tcpi:
+            if campus == "新竹":
+                peer_value = tcpi.get("medical_center")
+            elif campus == "竹北":
+                peer_value = tcpi.get("regional_hospital")
             elif campus == "竹東":
-                peer_value = latest_s.get("benchmark_district") or latest_s.get("benchmark_regional")
+                peer_value = tcpi.get("district_hospital")
+            if peer_value is not None:
+                peer_source = "TCPI"
         if peer_value is None:
-            tcpi = tcpi_map.get(code)
-            if tcpi:
-                if campus == "新竹":
-                    peer_value = tcpi.get("medical_center")
-                elif campus == "竹北":
-                    peer_value = tcpi.get("regional_hospital")
+            summaries = summary_map.get(code, [])
+            if summaries:
+                latest_s = summaries[-1]
+                if campus == "竹北":
+                    peer_value = latest_s.get("benchmark_regional")
                 elif campus == "竹東":
-                    peer_value = tcpi.get("district_hospital")
+                    peer_value = latest_s.get("benchmark_district") or latest_s.get("benchmark_regional")
                 if peer_value is not None:
-                    peer_source = "TCPI"
+                    peer_source = "peer"
 
         # Latest month anomaly details (for banner display)
         # unfavorable is already filtered to latest month
@@ -503,8 +506,16 @@ def dashboard_bulk(request):
 
 
 def _get_peer_value(code: str, campus: str) -> float | None:
-    """Get peer/benchmark value for indicator+campus."""
-    # Try YearlySummary first
+    """Get peer/benchmark value for indicator+campus. TCPI 優先，YearlySummary 回退。"""
+    tcpi = TCPIBenchmark.objects.filter(indicator_id=code).order_by("-year").first()
+    if tcpi:
+        if campus == "新竹" and tcpi.medical_center is not None:
+            return tcpi.medical_center
+        if campus == "竹北" and tcpi.regional_hospital is not None:
+            return tcpi.regional_hospital
+        if campus == "竹東" and tcpi.district_hospital is not None:
+            return tcpi.district_hospital
+
     ys = YearlySummary.objects.filter(
         indicator_id=code, campus=campus,
     ).order_by("-year").first()
@@ -515,16 +526,6 @@ def _get_peer_value(code: str, campus: str) -> float | None:
             val = ys.benchmark_district or ys.benchmark_regional
             if val is not None:
                 return val
-
-    # Try TCPI
-    tcpi = TCPIBenchmark.objects.filter(indicator_id=code).order_by("-year").first()
-    if tcpi:
-        if campus == "新竹":
-            return tcpi.medical_center
-        elif campus == "竹北":
-            return tcpi.regional_hospital
-        elif campus == "竹東":
-            return tcpi.district_hospital
 
     return None
 

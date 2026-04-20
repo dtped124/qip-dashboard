@@ -132,6 +132,7 @@ export async function loadDashboardFromAPI(campus: Campus): Promise<IndicatorDat
       benchmarkValue: item.peer_value,
       peerValue: item.peer_value,
       peerYear: null,
+      peerSource: (item.peer_source === 'TCPI' || item.peer_source === 'peer') ? item.peer_source : null,
       anomalies: (item.latest_anomalies || []).map(a => ({
         mechanism: a.mechanism as AnomalyResult['mechanism'],
         severity: a.severity as IndicatorStatus,

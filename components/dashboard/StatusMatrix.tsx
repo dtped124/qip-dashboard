@@ -66,6 +66,7 @@ export function StatusMatrix({ indicators, year }: Props) {
         benchmarkValue: null,
         peerValue: null,
         peerYear: null,
+        peerSource: null,
         anomalies: [],
         controlChart: null,
       });

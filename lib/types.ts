@@ -209,6 +209,7 @@ export interface IndicatorData {
   benchmarkValue: number | null;
   peerValue: number | null;
   peerYear: number | null;       // TCPI 標竿年度（民國年）
+  peerSource: 'TCPI' | 'peer' | null;  // 標竿資料來源（TCPI = 台灣臨床成效指標，peer = 月報表同儕欄）
   anomalies: AnomalyResult[];
   controlChart: ControlChartParams | null;
 }
