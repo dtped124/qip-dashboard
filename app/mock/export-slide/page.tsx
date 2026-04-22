@@ -168,13 +168,17 @@ export default function ExportSlideMockup() {
   const yTicks: number[] = [];
   for (let i = 0; i <= tickCount; i++) yTicks.push((yMax / tickCount) * i);
 
-  // X 軸刻度
-  const xTicks = SAMPLE_25
-    .map((d, i) => ({ i, label: fmtMonth(d) }))
-    .filter((t) => t.i % 6 === 0 || t.i === SAMPLE_25.length - 1);
+  // X 軸刻度：每個月都標示
+  const xTicks = SAMPLE_25.map((d, i) => ({ i, label: fmtMonth(d), d }));
 
-  // === 表格 ===
-  const TABLE_TOP = CHART_TOP + CHART_HEIGHT + 50;
+  // 年度交界位置（供加強分隔線）
+  const yearBoundaries: number[] = [];
+  for (let i = 1; i < SAMPLE_25.length; i++) {
+    if (SAMPLE_25[i].year !== SAMPLE_25[i - 1].year) yearBoundaries.push(i);
+  }
+
+  // === 表格 === （+60 預留旋轉 X 軸標籤空間）
+  const TABLE_TOP = CHART_TOP + CHART_HEIGHT + 60;
   const TABLE_LEFT = 70;
   const TABLE_RIGHT = 100;
   const TABLE_W = W - TABLE_LEFT - TABLE_RIGHT;
@@ -309,10 +313,30 @@ export default function ExportSlideMockup() {
 
           {/* X 軸 */}
           <line x1={chartX} x2={chartX + chartW} y1={chartY + chartH} y2={chartY + chartH} stroke="#9CA3AF" />
+          {/* 年度交界加強分隔線（貫穿 plot 區） */}
+          {yearBoundaries.map((i) => (
+            <line
+              key={`yb-${i}`}
+              x1={chartX + i * colW}
+              x2={chartX + i * colW}
+              y1={chartY}
+              y2={chartY + chartH}
+              stroke="#9CA3AF"
+              strokeWidth={1}
+              strokeDasharray="2 2"
+            />
+          ))}
           {xTicks.map((t) => (
             <g key={t.i}>
               <line x1={cx(t.i)} x2={cx(t.i)} y1={chartY + chartH} y2={chartY + chartH + 4} stroke="#9CA3AF" />
-              <text x={cx(t.i)} y={chartY + chartH + 18} fontSize={10} fill="#6B7280" textAnchor="middle">
+              <text
+                x={cx(t.i)}
+                y={chartY + chartH + 10}
+                fontSize={10}
+                fill="#6B7280"
+                textAnchor="end"
+                transform={`rotate(-45 ${cx(t.i)} ${chartY + chartH + 10})`}
+              >
                 {t.label}
               </text>
             </g>
