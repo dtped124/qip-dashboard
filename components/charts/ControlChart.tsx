@@ -77,8 +77,8 @@ export function ControlChart({ dataPoints, controlChart, anomalies, direction, u
     };
   });
 
-  // 預設顯示最後 24 個月，可切換顯示全部
-  const VISIBLE_WINDOW = 24;
+  // 預設顯示最後 25 個月（與後端管制限計算視窗一致），可切換顯示全部
+  const VISIBLE_WINDOW = 25;
   const totalPoints = chartData.length;
   const canExpand = totalPoints > VISIBLE_WINDOW;
   const [showAll, setShowAll] = useState(false);

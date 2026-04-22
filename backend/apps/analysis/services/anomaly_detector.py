@@ -57,9 +57,9 @@ def analyze_indicator(
     # Mechanism 1: Control chart
     control_chart: ControlChartParams | None = None
     if not skip_control_chart:
-        recent_24 = sorted_data[-25:]
-        chart_type = select_chart_type(recent_24, data_nature)
-        control_chart = compute_control_chart_params(recent_24, chart_type, target_value=target_value)
+        recent_25 = sorted_data[-25:]
+        chart_type = select_chart_type(recent_25, data_nature)
+        control_chart = compute_control_chart_params(recent_25, chart_type, target_value=target_value)
         if control_chart:
             cc_anomalies = detect_control_chart_anomalies(sorted_data, control_chart, direction)
             anomalies.extend(cc_anomalies)
