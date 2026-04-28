@@ -99,6 +99,22 @@ export function SlideLayout({
     }
   }
 
+  // 取分子分母：優先用 dp 上的欄位，缺了則由 variableLimits.sampleSize + value 回推
+  // P/U Chart 計算時以 sampleSize 作為當月分母，回推 numerator = round(value/multiplier × sampleSize)
+  function getNumDen(dp: MonthlyDataPoint): { num: number | null; den: number | null } {
+    if (dp.numerator != null && dp.denominator != null) {
+      return { num: dp.numerator, den: dp.denominator };
+    }
+    const vl = limitsMap.get(`${dp.year}_${dp.month}`);
+    if (vl?.sampleSize && dp.value != null) {
+      const multiplier = unit === 'permille' ? 1000 : 100;
+      const den = vl.sampleSize;
+      const num = Math.round((dp.value / multiplier) * den);
+      return { num, den };
+    }
+    return { num: null, den: null };
+  }
+
   // 圖表版面
   const CHART_TOP = 86;
   const CHART_LEFT = 70;
@@ -476,17 +492,22 @@ export function SlideLayout({
                 {isNA ? 'NA' : formatRatio(v, unit)}
               </text>
             ) : (
-              <>
-                <text x={tColX(i)} y={tTextY(2)} fontSize={12} fill="#111827" textAnchor="middle">
-                  {dp.numerator ?? (isNA ? 'NA' : '-')}
-                </text>
-                <text x={tColX(i)} y={tTextY(3)} fontSize={12} fill="#111827" textAnchor="middle">
-                  {dp.denominator ?? (isNA ? 'NA' : '-')}
-                </text>
-                <text x={tColX(i)} y={tTextY(4)} fontSize={12} fill={ratioColor} fontWeight={ratioFontWeight} textAnchor="middle">
-                  {isNA ? 'NA' : formatRatio(v, unit)}
-                </text>
-              </>
+              (() => {
+                const { num, den } = getNumDen(dp);
+                return (
+                  <>
+                    <text x={tColX(i)} y={tTextY(2)} fontSize={12} fill="#111827" textAnchor="middle">
+                      {num ?? (isNA ? 'NA' : '-')}
+                    </text>
+                    <text x={tColX(i)} y={tTextY(3)} fontSize={12} fill="#111827" textAnchor="middle">
+                      {den ?? (isNA ? 'NA' : '-')}
+                    </text>
+                    <text x={tColX(i)} y={tTextY(4)} fontSize={12} fill={ratioColor} fontWeight={ratioFontWeight} textAnchor="middle">
+                      {isNA ? 'NA' : formatRatio(v, unit)}
+                    </text>
+                  </>
+                );
+              })()
             )}
           </g>
         );
