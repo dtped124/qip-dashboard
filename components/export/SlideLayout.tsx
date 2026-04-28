@@ -115,6 +115,13 @@ export function SlideLayout({
     return { num: null, den: null };
   }
 
+  // 判斷某月是否「無資料」：value 為 null，或分母為 0（0/0 月份）
+  function isNoData(dp: MonthlyDataPoint): boolean {
+    if (dp.value == null) return true;
+    const { den } = getNumDen(dp);
+    return den === 0;
+  }
+
   // 圖表版面
   const CHART_TOP = 86;
   const CHART_LEFT = 70;
@@ -127,10 +134,10 @@ export function SlideLayout({
   const colW = chartData.length > 0 ? chartW / chartData.length : 0;
   const cx = (i: number) => chartX + (i + 0.5) * colW;
 
-  // Y 軸範圍
+  // Y 軸範圍（排除無資料月份）
   const validValues = chartData
-    .map((d) => d.value)
-    .filter((v): v is number => v != null);
+    .filter((dp) => !isNoData(dp))
+    .map((dp) => dp.value as number);
   const allUcls: number[] = [];
   const allLcls: number[] = [];
   for (const dp of chartData) {
@@ -169,7 +176,7 @@ export function SlideLayout({
   // 點與折線
   const chartPoints = chartData.map((dp, i) => {
     const v = dp.value;
-    const isNA = v == null;
+    const isNA = isNoData(dp);
     const key = `${dp.year}_${dp.month}`;
     const isAnomaly = !isNA && anomalyMap.has(key);
     return {
@@ -198,7 +205,7 @@ export function SlideLayout({
   }
 
   const naColumns = chartData
-    .map((dp, i) => ({ i, isNA: dp.value == null }))
+    .map((dp, i) => ({ i, isNA: isNoData(dp) }))
     .filter((c) => c.isNA);
 
   // 階梯管制限路徑（P/U）
@@ -476,7 +483,7 @@ export function SlideLayout({
       {/* 每欄資料 */}
       {tableData.map((dp, i) => {
         const v = dp.value;
-        const isNA = v == null;
+        const isNA = isNoData(dp);
         const key = `${dp.year}_${dp.month}`;
         const isAnomaly = !isNA && anomalyMap.has(key);
         const periodCell = isQuarterly ? `Q${monthToQuarter(dp.month)}` : `${dp.month}月`;
