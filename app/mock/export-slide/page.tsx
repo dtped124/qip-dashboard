@@ -107,26 +107,39 @@ export default function ExportSlideMockup() {
   const yMax = Math.ceil((dataMax + 0.5) * 2) / 2; // 向上取整到 0.5
   const yScale = (v: number) => chartY + chartH - ((v - yMin) / (yMax - yMin)) * chartH;
 
-  // 點與折線 — NA 月份（den=0）在管制圖上呈現為 0，折線連續不斷
+  // 點與折線 — NA 月份不畫點、折線斷開
   const chartPoints = SAMPLE_25.map((d, i) => {
     const r = ratioPct(d);
     const lim = limits[i];
     const isAnomaly = r != null && lim.ucl != null && r > lim.ucl;
     const isNA = r === null;
-    const displayValue = isNA ? 0 : r; // NA → 0
     return {
       i,
       d,
       x: cx(i),
-      y: yScale(displayValue as number),
+      y: isNA ? null : yScale(r as number),
       isAnomaly,
       isNA,
     };
   });
 
-  const dataPath: string[] = chartPoints.map((p, idx) =>
-    `${idx === 0 ? 'M' : 'L'} ${p.x} ${p.y}`
-  );
+  const dataPath: string[] = [];
+  {
+    let started = false;
+    chartPoints.forEach((p) => {
+      if (p.y == null) {
+        started = false;
+      } else if (!started) {
+        dataPath.push(`M ${p.x} ${p.y}`);
+        started = true;
+      } else {
+        dataPath.push(`L ${p.x} ${p.y}`);
+      }
+    });
+  }
+
+  // NA 欄位（用於灰底標示「無資料」）
+  const naColumns = SAMPLE_25.map((d, i) => ({ i, isNA: d.den === 0 })).filter((c) => c.isNA);
 
   function buildSteppedPath(values: (number | null)[]): string {
     const segs: string[] = [];
@@ -214,6 +227,29 @@ export default function ExportSlideMockup() {
           {/* === 管制圖 === */}
           <rect x={chartX} y={chartY} width={chartW} height={chartH} fill="#FAFAFA" />
 
+          {/* NA 欄位灰底（無資料） */}
+          {naColumns.map((c) => (
+            <g key={`na-${c.i}`}>
+              <rect
+                x={chartX + c.i * colW}
+                y={chartY}
+                width={colW}
+                height={chartH}
+                fill="#E5E7EB"
+                opacity={0.5}
+              />
+              <text
+                x={chartX + (c.i + 0.5) * colW}
+                y={chartY + chartH / 2 + 4}
+                fontSize={10}
+                fill="#6B7280"
+                textAnchor="middle"
+              >
+                NA
+              </text>
+            </g>
+          ))}
+
           {/* Y 軸格線 + 刻度 */}
           {yTicks.map((t) => (
             <g key={t}>
@@ -273,19 +309,15 @@ export default function ExportSlideMockup() {
             <path d={dataPath.join(' ')} stroke="#111827" strokeWidth={2} fill="none" />
           )}
 
-          {/* 資料點（異常點紅色加大；NA 月份用空心灰點以示區別） */}
+          {/* 資料點（異常點紅色加大；NA 月份不畫點） */}
           {chartPoints.map((p) => {
+            if (p.y == null) return null;
             if (p.isAnomaly) {
               return (
                 <g key={p.i}>
                   <circle cx={p.x} cy={p.y} r={8} fill="#DC2626" opacity={0.25} />
                   <circle cx={p.x} cy={p.y} r={5} fill="#DC2626" stroke="#fff" strokeWidth={1.5} />
                 </g>
-              );
-            }
-            if (p.isNA) {
-              return (
-                <circle key={p.i} cx={p.x} cy={p.y} r={3.5} fill="#fff" stroke="#9CA3AF" strokeWidth={1.5} />
               );
             }
             return <circle key={p.i} cx={p.x} cy={p.y} r={3.5} fill="#16A34A" stroke="#fff" strokeWidth={1} />;
