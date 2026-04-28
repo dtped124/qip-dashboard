@@ -41,10 +41,25 @@ export function DataTable({ monthlyData, unit, isQuarterly = false }: Props) {
                 {periods.map(p => {
                   const dp = yearData.find(d => d.month === p.month);
                   const val = dp?.value ?? null;
+                  // 0/0 視同 NA；分子分母都有效才顯示 (num/den)
+                  const hasND =
+                    dp?.numerator != null &&
+                    dp?.denominator != null &&
+                    dp.denominator > 0;
+                  const isNA = val === null || (dp?.denominator === 0);
                   return (
                     <td key={p.month} className="text-center px-2 py-2 text-gray-600">
-                      {val !== null ? formatValue(val, unit) : (
+                      {isNA ? (
                         <span className="text-gray-300">-</span>
+                      ) : (
+                        <>
+                          <div>{formatValue(val, unit)}</div>
+                          {hasND && (
+                            <div className="text-[10px] text-gray-400 leading-tight">
+                              {dp!.numerator}/{dp!.denominator}
+                            </div>
+                          )}
+                        </>
                       )}
                     </td>
                   );
