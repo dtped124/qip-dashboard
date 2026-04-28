@@ -115,11 +115,15 @@ export function SlideLayout({
     return { num: null, den: null };
   }
 
-  // 判斷某月是否「無資料」：value 為 null，或分母為 0（0/0 月份）
+  // 判斷某月是否「無資料」
+  // - I-MR：value 為 null 才算 NA（連續型資料 0 是合法值）
+  // - P/U：value 為 null，或分母無效（null / 0）都算 NA
+  //   分母無效情境包含：dp 上沒給 num/den，且該月也沒進入 backend 的 variableLimits（不在 n 計算內）
   function isNoData(dp: MonthlyDataPoint): boolean {
     if (dp.value == null) return true;
+    if (isIMR) return false;
     const { den } = getNumDen(dp);
-    return den === 0;
+    return den == null || den === 0;
   }
 
   // 圖表版面
