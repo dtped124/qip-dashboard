@@ -282,7 +282,7 @@ export default function IndicatorDetailPage() {
       {/* 完整數據表 */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-6 mb-6">
         <h2 className="text-base font-bold text-gray-800 mb-4">完整數據</h2>
-        <DataTable monthlyData={monthlyData} unit={meta.unit} isQuarterly={effectiveIsQuarterly} />
+        <DataTable monthlyData={monthlyData} unit={meta.unit} isQuarterly={effectiveIsQuarterly} controlChart={controlChart} />
       </div>
 
       {/* AI 深度分析 */}
