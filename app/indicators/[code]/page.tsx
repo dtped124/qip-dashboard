@@ -9,6 +9,7 @@ import type { MonthlyDataPoint, YearlySummary, ControlChartParams, AnomalyResult
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
 import { TrendArrow } from '@/components/dashboard/TrendArrow';
 import { ControlChart } from '@/components/charts/ControlChart';
+import { ExportSlideButton } from '@/components/export/ExportSlideButton';
 import { YearOverlayChart } from '@/components/charts/YearOverlayChart';
 import { YearCompareBar } from '@/components/charts/YearCompareBar';
 import { BenchmarkBar } from '@/components/charts/BenchmarkBar';
@@ -213,14 +214,25 @@ export default function IndicatorDetailPage() {
       {/* 管制圖 */}
       {controlChart && (controlChart.sigma > 0 || (controlChart.variableLimits && controlChart.variableLimits.length > 0)) && (
         <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-6 mb-6">
-          <h2 className="text-base font-bold text-gray-800 mb-4 flex items-center gap-2">
-            管制圖
-            <span className="text-xs font-normal text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-              {controlChart.chartType === 'P' ? 'P Chart'
-                : controlChart.chartType === 'U' ? 'U Chart'
-                : 'I-MR Chart'}
-            </span>
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-base font-bold text-gray-800 flex items-center gap-2">
+              管制圖
+              <span className="text-xs font-normal text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                {controlChart.chartType === 'P' ? 'P Chart'
+                  : controlChart.chartType === 'U' ? 'U Chart'
+                  : 'I-MR Chart'}
+              </span>
+            </h2>
+            <ExportSlideButton
+              meta={meta}
+              dataPoints={monthlyData}
+              controlChart={controlChart}
+              anomalies={anomalies}
+              peerValue={peerValue}
+              campus={campus}
+              isQuarterly={effectiveIsQuarterly}
+            />
+          </div>
           <ControlChart
             dataPoints={monthlyData}
             controlChart={controlChart}
