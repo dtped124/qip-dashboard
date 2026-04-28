@@ -66,9 +66,13 @@ export function DataTable({ monthlyData, unit, isQuarterly = false, controlChart
                   const dp = yearData.find(d => d.month === p.month);
                   const val = dp?.value ?? null;
                   const { num, den } = dp ? getNumDen(dp) : { num: null, den: null };
-                  // 0/0 或分母為 0 視同 NA
-                  const isNA = val === null || (den != null && den === 0);
                   const hasND = num != null && den != null && den > 0;
+                  // P/U Chart 的 0/0 — 顯式 0/0 或值為 0 且無 num/den 可驗證 → NA
+                  const isPU = controlChart?.chartType === 'P' || controlChart?.chartType === 'U';
+                  const isNA =
+                    val === null
+                    || (den != null && den === 0)
+                    || (isPU && val === 0 && !hasND);
                   return (
                     <td key={p.month} className="text-center px-2 py-2 text-gray-600">
                       {isNA ? (
