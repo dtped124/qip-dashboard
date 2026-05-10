@@ -13,7 +13,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [checking, setChecking] = useState(true)
 
-  const isPublic = PUBLIC_PATHS.includes(pathname)
+  const isPublic = PUBLIC_PATHS.includes(pathname) || pathname.startsWith('/mock/')
 
   useEffect(() => {
     if (isPublic) {

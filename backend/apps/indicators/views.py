@@ -371,7 +371,13 @@ def dashboard_bulk(request):
 
         # Full monthly data with year/month (for matrix status computation)
         monthly_data = [
-            {"year": dp["year"], "month": dp["month"], "value": dp["value"]}
+            {
+                "year": dp["year"],
+                "month": dp["month"],
+                "value": dp["value"],
+                "numerator": dp["numerator"],
+                "denominator": dp["denominator"],
+            }
             for dp in dps
         ]
 

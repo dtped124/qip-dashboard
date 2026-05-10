@@ -58,7 +58,7 @@ interface DashboardItem {
   latest_value: number | null;
   latest_period: string | null;
   sparkline: (number | null)[];
-  monthly_data: { year: number; month: number; value: number | null }[];
+  monthly_data: { year: number; month: number; value: number | null; numerator?: number | null; denominator?: number | null }[];
   status: string;
   mechanisms: string[];
   unfavorable_count: number;
@@ -107,6 +107,8 @@ export async function loadDashboardFromAPI(campus: Campus): Promise<IndicatorDat
       year: dp.year,
       month: dp.month,
       value: dp.value,
+      numerator: dp.numerator ?? undefined,
+      denominator: dp.denominator ?? undefined,
     }));
 
     // Build yearly summaries placeholder

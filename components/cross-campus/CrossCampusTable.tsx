@@ -59,22 +59,44 @@ function parseLatestMonth(s: string | null): { year: number; month: number } | n
   return null;
 }
 
-// 計算某季的平均值
+// 計算某季的比率
+// 規則：
+// - percent / permille：Σ分子 / Σ分母 × multiplier（標準作法，季度有效樣本加權）
+// - 其他單位（count、ratio）或缺分子分母：回退用月平均
 // upToMonth：只算到這個月（含）為止，避免把「尚未匯入的月份值為 0」納入計算
-function quarterAverage(
-  monthlyData: { year: number; month: number; value: number | null }[],
+function quarterRatio(
+  monthlyData: { year: number; month: number; value: number | null; numerator?: number; denominator?: number }[],
   year: number,
   quarterStartMonth: number,  // 1, 4, 7, 10
+  unit: string,
   upToMonth?: number          // 省略代表整季都算
 ): number | null {
   const endMonth = Math.min(quarterStartMonth + 2, upToMonth ?? quarterStartMonth + 2);
+
+  let totalNum = 0;
+  let totalDen = 0;
+  let hasND = false;
   const vals: number[] = [];
+
   for (let m = quarterStartMonth; m <= endMonth; m++) {
     const dp = monthlyData.find(d => d.year === year && d.month === m);
-    if (dp && dp.value !== null) vals.push(dp.value);
+    if (!dp || dp.value === null) continue;
+    if ((unit === 'percent' || unit === 'permille')
+        && dp.numerator != null && dp.denominator != null && dp.denominator > 0) {
+      totalNum += dp.numerator;
+      totalDen += dp.denominator;
+      hasND = true;
+    } else {
+      vals.push(dp.value);
+    }
   }
-  if (vals.length === 0) return null;
-  return vals.reduce((a, b) => a + b, 0) / vals.length;
+
+  if (hasND && totalDen > 0) {
+    const multiplier = unit === 'permille' ? 1000 : 100;
+    return (totalNum / totalDen) * multiplier;
+  }
+  if (vals.length > 0) return vals.reduce((a, b) => a + b, 0) / vals.length;
+  return null;
 }
 
 // 根據最新月份，回傳當季與前季的起始月 / 年資訊
@@ -134,8 +156,8 @@ function buildRows(allData: Record<string, IndicatorData[]>): TableRow[] {
       if (parsed) {
         const { curYear, curStart, prevYear, prevStart } = quarterRange(parsed.year, parsed.month);
         // 當季只算到 latestMonth 為止（避免把未匯入月份的 0 值納入）
-        curValue  = quarterAverage(ind.monthlyData, curYear,  curStart, parsed.month);
-        prevValue = quarterAverage(ind.monthlyData, prevYear, prevStart);
+        curValue  = quarterRatio(ind.monthlyData, curYear,  curStart, ind.meta.unit, parsed.month);
+        prevValue = quarterRatio(ind.monthlyData, prevYear, prevStart, ind.meta.unit);
       }
 
       if (isAnomalous(ind.status)) hasAnomaly = true;

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { CalendarRange, Loader2, AlertCircle } from 'lucide-react';
 import { CrossCampusTable } from '@/components/cross-campus/CrossCampusTable';
 import { CrossCampusAITab } from '@/components/cross-campus/CrossCampusAITab';
+import { ExportScorecardButton } from '@/components/export/ExportScorecardButton';
 import { loadDashboardFromAPI } from '@/lib/api';
 import { isAIEnabled } from '@/lib/ai/apiKeyManager';
 import type { IndicatorData, Campus } from '@/lib/types';
@@ -123,8 +124,8 @@ export default function CrossCampusPage() {
         </div>
       </div>
 
-      {/* Tab switcher */}
-      <div className="flex gap-1 mb-6 border-b border-gray-200">
+      {/* Tab switcher + export button */}
+      <div className="flex items-center gap-1 mb-6 border-b border-gray-200">
         <button
           onClick={() => setActiveTab('table')}
           className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
@@ -155,6 +156,8 @@ export default function CrossCampusPage() {
             <span className="ml-1 text-xs text-gray-300">（未啟用）</span>
           )}
         </button>
+
+        <ExportScorecardButton allData={allData} />
       </div>
 
       {/* Tab content */}

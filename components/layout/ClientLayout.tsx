@@ -10,7 +10,7 @@ const BARE_PATHS = ['/entry/login'];
 
 export function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isBare = BARE_PATHS.includes(pathname);
+  const isBare = BARE_PATHS.includes(pathname) || pathname.startsWith('/mock/');
 
   if (isBare) {
     return <AuthGuard>{children}</AuthGuard>;

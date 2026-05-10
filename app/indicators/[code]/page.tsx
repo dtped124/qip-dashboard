@@ -271,7 +271,6 @@ export default function IndicatorDetailPage() {
         <h2 className="text-base font-bold text-gray-800 mb-4">標竿比較</h2>
         <BenchmarkBar
           latestValue={latestValue}
-          yearlySummaries={yearlySummaries}
           unit={meta.unit}
           peerValue={peerValue}
           peerYear={peerYear}

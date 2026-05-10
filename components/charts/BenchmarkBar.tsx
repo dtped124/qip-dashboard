@@ -1,11 +1,10 @@
 'use client';
 
-import { YearlySummary, IndicatorUnit, Campus } from '@/lib/types';
+import { IndicatorUnit, Campus } from '@/lib/types';
 import { formatValue } from '@/lib/constants';
 
 interface Props {
   latestValue: number | null;
-  yearlySummaries: YearlySummary[];
   unit: IndicatorUnit;
   peerValue?: number | null;
   peerYear?: number | null;
@@ -22,25 +21,7 @@ function getPeerLabel(campus?: Campus): string {
   }
 }
 
-export function BenchmarkBar({ latestValue, yearlySummaries, unit, peerValue, peerYear, campus }: Props) {
-  // 找最新有標竿值的年度（含年份）
-  let regional: number | null = null;
-  let regionalYear: number | null = null;
-  let district: number | null = null;
-  let districtYear: number | null = null;
-  for (let i = yearlySummaries.length - 1; i >= 0; i--) {
-    const s = yearlySummaries[i];
-    if (regional === null && s.benchmarkRegional !== null) {
-      regional = s.benchmarkRegional;
-      regionalYear = s.year;
-    }
-    if (district === null && s.benchmarkDistrict !== null) {
-      district = s.benchmarkDistrict;
-      districtYear = s.year;
-    }
-    if (regional !== null && district !== null) break;
-  }
-
+export function BenchmarkBar({ latestValue, unit, peerValue, peerYear, campus }: Props) {
   // 組合比較項目
   const items: { label: string; value: number; color: string }[] = [];
 
@@ -49,26 +30,10 @@ export function BenchmarkBar({ latestValue, yearlySummaries, unit, peerValue, pe
     items.push({ label: '本院最新值', value: latestValue, color: '#3B82F6' });
   }
 
-  // 2. TCPI 同儕標竿（優先顯示）
+  // 2. TCPI 同儕標竿
   if (peerValue !== null && peerValue !== undefined) {
     const yearSuffix = peerYear ? ` (${peerYear}年)` : '';
     items.push({ label: `${getPeerLabel(campus)}${yearSuffix}`, value: peerValue, color: '#EF4444' });
-  }
-
-  // 3. QIP 區域/地區醫院標竿（來自前一年度全國統計）
-  if (regional !== null) {
-    items.push({
-      label: `QIP 區域醫院${regionalYear ? ` (${regionalYear - 1}年)` : ''}`,
-      value: regional,
-      color: '#F97316',
-    });
-  }
-  if (district !== null) {
-    items.push({
-      label: `QIP 地區醫院${districtYear ? ` (${districtYear - 1}年)` : ''}`,
-      value: district,
-      color: '#10B981',
-    });
   }
 
   if (items.length === 0) {
