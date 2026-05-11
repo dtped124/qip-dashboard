@@ -41,6 +41,11 @@ const COLS = {
   view: 70,
 };
 
+// 某些指標的分子分母對讀者沒有意義（例如：床日數），不在卡片上顯示 (N/D)
+const HIDE_NUM_DEN_CODES = new Set<string>([
+  'HA10-04', // 急性一般病床開放率（分母 = 床日數，數字大但對讀者無意義）
+]);
+
 // 計算每欄的左 x 與右 x
 function colXs() {
   const keys = Object.keys(COLS) as (keyof typeof COLS)[];
@@ -238,6 +243,7 @@ export function QuarterlyScorecardSlide({ slide }: Props) {
       {/* ===== Body 資料列 ===== */}
       {slide.rows.map((r, i) => {
         const rowCenterY = bodyTop + i * ROW_H + ROW_H / 2;
+        const hideND = HIDE_NUM_DEN_CODES.has(r.code);
 
         // 「比率 + (分子/分母)」雙行顯示
         const renderRatioCell = (
@@ -248,7 +254,7 @@ export function QuarterlyScorecardSlide({ slide }: Props) {
           color: string,
         ) => {
           const cx = (xCol.left + xCol.right) / 2;
-          const nd = formatND(num, den);
+          const nd = hideND ? '' : formatND(num, den);
           if (nd) {
             return (
               <>

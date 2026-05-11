@@ -1,4 +1,5 @@
 import type { Campus, IndicatorData, IndicatorUnit, IndicatorStatus } from '@/lib/types';
+import { lastCompleteQuarter, previousQuarter } from '@/lib/aggregation';
 
 // ===== 匯出用資料結構 =====
 
@@ -72,18 +73,22 @@ function parseLatestMonth(s: string | null): { year: number; month: number } | n
   return null;
 }
 
+/**
+ * 取得「最近一個完整季」的當季與上一季資訊。
+ * 範例：latestMonth=4 → 當季 Q1（完整），上一季 Q4 of 去年
+ */
 function quarterInfo(year: number, month: number) {
-  const q = Math.ceil(month / 3);
-  const curStart = (q - 1) * 3 + 1;
-  let prevYear = year;
-  let prevStart: number;
-  if (q === 1) {
-    prevYear = year - 1;
-    prevStart = 10;
-  } else {
-    prevStart = (q - 2) * 3 + 1;
-  }
-  return { q, curYear: year, curStart, prevYear, prevStart };
+  const cur = lastCompleteQuarter(year, month);
+  const prev = previousQuarter(cur.year, cur.quarter);
+  return {
+    q: cur.quarter,
+    curYear: cur.year,
+    curStart: cur.startMonth,
+    curEnd: cur.endMonth,
+    prevQ: prev.quarter,
+    prevYear: prev.year,
+    prevStart: prev.startMonth,
+  };
 }
 
 function aggregateQuarter(
@@ -119,7 +124,9 @@ function aggregateQuarter(
     return { ratio: (totalNum / totalDen) * multiplier, num: totalNum, den: totalDen };
   }
   if (valCount > 0) {
-    return { ratio: sumVal / valCount, num: null, den: null };
+    // count 單位（事件數）→ 季為 3 個月加總；其他連續值（ratio、平均數）→ 取月平均
+    const value = unit === 'count' ? sumVal : sumVal / valCount;
+    return { ratio: value, num: null, den: null };
   }
   return { ratio: null, num: null, den: null };
 }
@@ -154,7 +161,9 @@ function aggregateYear(
     return { ratio: (totalNum / totalDen) * multiplier, num: totalNum, den: totalDen };
   }
   if (valCount > 0) {
-    return { ratio: sumVal / valCount, num: null, den: null };
+    // count 單位（事件數）→ 年為 12 個月加總；其他連續值（ratio、平均數）→ 取月平均
+    const value = unit === 'count' ? sumVal : sumVal / valCount;
+    return { ratio: value, num: null, den: null };
   }
   return { ratio: null, num: null, den: null };
 }
@@ -196,8 +205,7 @@ export function buildQuarterlyScorecard(
 
   const qi = quarterInfo(latestYear, latestMonth);
   const quarterLabel = `${qi.curYear}.Q${qi.q}`;
-  const prevQ = qi.q === 1 ? 4 : qi.q - 1;
-  const prevQuarterLabel = `${qi.prevYear}.Q${prevQ}`;
+  const prevQuarterLabel = `${qi.prevYear}.Q${qi.prevQ}`;
   const prevFullYear = qi.curYear - 1;
   const yearAvgLabel = `${prevFullYear}年\n平均值`;
 
@@ -206,7 +214,8 @@ export function buildQuarterlyScorecard(
 
     const rows: ScorecardRow[] = indicators.map((ind, idx) => {
       const unit = ind.meta.unit;
-      const cur = aggregateQuarter(ind.monthlyData, qi.curYear, qi.curStart, latestMonth, unit);
+      // 當季與上一季皆已是「完整季」，整季三個月都聚合
+      const cur = aggregateQuarter(ind.monthlyData, qi.curYear, qi.curStart, qi.curEnd, unit);
       const prev = aggregateQuarter(ind.monthlyData, qi.prevYear, qi.prevStart, qi.prevStart + 2, unit);
 
       // 年平均：優先用 yearlySummaries, 否則從 monthlyData 聚合

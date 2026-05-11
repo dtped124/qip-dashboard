@@ -2,6 +2,8 @@
 
 import { IndicatorData } from '@/lib/types';
 import { formatValue, CATEGORY_COLORS } from '@/lib/constants';
+import { useDashboardStore } from '@/lib/store/dashboardStore';
+import { latestQuarterlyValue } from '@/lib/aggregation';
 import { StatusBadge } from './StatusBadge';
 import { TrendArrow } from './TrendArrow';
 import { Sparkline } from './Sparkline';
@@ -19,13 +21,21 @@ interface Props {
 
 export function IndicatorCard({ indicator }: Props) {
   const { meta, latestValue, latestMonth, status, trend, benchmarkValue, peerValue, peerSource, monthlyData, yearlySummaries, anomalies } = indicator;
+  const periodMode = useDashboardStore(s => s.periodMode);
   const color = CATEGORY_COLORS[meta.category];
 
-  // 找最新月份
+  // 找最新月份（給異常判定用 — 無論月/季模式都基於最新月份的不利異常）
   const validPoints = monthlyData
     .filter(dp => dp.value !== null)
     .sort((a, b) => (b.year * 12 + b.month) - (a.year * 12 + a.month));
   const latestPoint = validPoints[0];
+
+  // 季模式：顯示最近完整季的值與標籤；月模式：維持現狀
+  const quarterly = periodMode === 'quarterly'
+    ? latestQuarterlyValue(monthlyData, meta.dataNature, meta.unit)
+    : null;
+  const displayValue = quarterly ? quarterly.value : latestValue;
+  const displayPeriod = quarterly ? quarterly.label : latestMonth;
 
   // 只取最新月份的不利異常（與 status 判定邏輯一致）
   const latestUnfavorable = latestPoint
@@ -78,10 +88,10 @@ export function IndicatorCard({ indicator }: Props) {
       <div className="flex items-end justify-between mb-2">
         <div>
           <div className="text-2xl font-bold text-gray-900">
-            {formatValue(latestValue, meta.unit)}
+            {formatValue(displayValue, meta.unit)}
           </div>
-          {latestMonth && (
-            <div className="text-xs text-gray-400 mt-0.5">{latestMonth}</div>
+          {displayPeriod && (
+            <div className="text-xs text-gray-400 mt-0.5">{displayPeriod}</div>
           )}
         </div>
         <Sparkline data={monthlyData} year={latestYear} color={color} />

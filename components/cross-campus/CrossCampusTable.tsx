@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useDashboardStore } from '@/lib/store/dashboardStore';
+import { lastCompleteQuarter, previousQuarter } from '@/lib/aggregation';
 import type { IndicatorData, Campus, IndicatorStatus } from '@/lib/types';
 
 const ALL_CAMPUSES: Campus[] = ['竹北', '竹東', '新竹'];
@@ -95,20 +96,27 @@ function quarterRatio(
     const multiplier = unit === 'permille' ? 1000 : 100;
     return (totalNum / totalDen) * multiplier;
   }
-  if (vals.length > 0) return vals.reduce((a, b) => a + b, 0) / vals.length;
+  if (vals.length > 0) {
+    // count 單位（事件數）→ 季為加總；其他連續值 → 月平均
+    return unit === 'count'
+      ? vals.reduce((a, b) => a + b, 0)
+      : vals.reduce((a, b) => a + b, 0) / vals.length;
+  }
   return null;
 }
 
-// 根據最新月份，回傳當季與前季的起始月 / 年資訊
+// 根據最新月份，回傳「最近完整季」的當季與前季起始/末月
+// （單月或雙月不完整時自動回退至前一個完整季）
 function quarterRange(year: number, month: number): {
-  curYear: number; curStart: number;
-  prevYear: number; prevStart: number;
+  curYear: number; curStart: number; curEnd: number;
+  prevYear: number; prevStart: number; prevEnd: number;
 } {
-  const q = Math.ceil(month / 3);
-  const curStart = (q - 1) * 3 + 1;
-  const prevQ = q - 1;
-  if (prevQ === 0) return { curYear: year, curStart, prevYear: year - 1, prevStart: 10 };
-  return { curYear: year, curStart, prevYear: year, prevStart: (prevQ - 1) * 3 + 1 };
+  const cur = lastCompleteQuarter(year, month);
+  const prev = previousQuarter(cur.year, cur.quarter);
+  return {
+    curYear: cur.year, curStart: cur.startMonth, curEnd: cur.endMonth,
+    prevYear: prev.year, prevStart: prev.startMonth, prevEnd: prev.endMonth,
+  };
 }
 
 function getChangeArrow(current: number | null, prev: number | null): '↑' | '↓' | '→' {
@@ -154,9 +162,9 @@ function buildRows(allData: Record<string, IndicatorData[]>): TableRow[] {
       let curValue: number | null = ind.latestValue;
       let prevValue: number | null = null;
       if (parsed) {
-        const { curYear, curStart, prevYear, prevStart } = quarterRange(parsed.year, parsed.month);
-        // 當季只算到 latestMonth 為止（避免把未匯入月份的 0 值納入）
-        curValue  = quarterRatio(ind.monthlyData, curYear,  curStart, ind.meta.unit, parsed.month);
+        const { curYear, curStart, curEnd, prevYear, prevStart } = quarterRange(parsed.year, parsed.month);
+        // 兩季皆為完整季 — 整季三個月都聚合（Σ分子/Σ分母）
+        curValue  = quarterRatio(ind.monthlyData, curYear,  curStart, ind.meta.unit, curEnd);
         prevValue = quarterRatio(ind.monthlyData, prevYear, prevStart, ind.meta.unit);
       }
 

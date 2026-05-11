@@ -133,7 +133,7 @@ export default function HomePage() {
           </span>
         </h2>
         <div className="flex items-center gap-3">
-          {store.viewMode === 'heatmap' && <PeriodToggle />}
+          <PeriodToggle />
           <ViewToggle />
         </div>
       </div>

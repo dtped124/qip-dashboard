@@ -7,6 +7,7 @@ import { CrossCampusAITab } from '@/components/cross-campus/CrossCampusAITab';
 import { ExportScorecardButton } from '@/components/export/ExportScorecardButton';
 import { loadDashboardFromAPI } from '@/lib/api';
 import { isAIEnabled } from '@/lib/ai/apiKeyManager';
+import { lastCompleteQuarter, previousQuarter } from '@/lib/aggregation';
 import type { IndicatorData, Campus } from '@/lib/types';
 
 const ALL_CAMPUSES: Campus[] = ['竹北', '竹東', '新竹'];
@@ -22,26 +23,18 @@ function parseLatestMonth(s: string | null): { year: number; month: number } | n
   return null;
 }
 
-function getQuarterNum(month: number): number {
-  return Math.ceil(month / 3);
+/**
+ * 「最近完整季」資訊（含當季、上一季、各自的標籤與起訖月）
+ * — 不直接用 latestMonth 判季，避免單月資料被當成下季數值
+ */
+function completeQuarterInfo(latestYear: number, latestMonth: number) {
+  const cur = lastCompleteQuarter(latestYear, latestMonth);
+  const prev = previousQuarter(cur.year, cur.quarter);
+  return { cur, prev };
 }
 
-function quarterLabel(year: number, month: number): string {
-  const q = getQuarterNum(month);
-  const start = (q - 1) * 3 + 1;
-  const end = q * 3;
-  return `${year}年Q${q}（${start}-${end}月）`;
-}
-
-function prevQuarterLabel(year: number, month: number): string {
-  const q = getQuarterNum(month);
-  if (q === 1) return `${year - 1}年Q4（10-12月）`;
-  const pq = q - 1;
-  return `${year}年Q${pq}（${(pq - 1) * 3 + 1}-${pq * 3}月）`;
-}
-
-function quarterKey(year: number, month: number): string {
-  return `${year}Q${getQuarterNum(month)}`;
+function quarterLabelOf(year: number, quarter: number, startMonth: number, endMonth: number): string {
+  return `${year}年Q${quarter}（${startMonth}-${endMonth}月）`;
 }
 
 function findLatestYearMonth(allData: Record<string, IndicatorData[]>): { year: number; month: number } | null {
@@ -107,9 +100,14 @@ export default function CrossCampusPage() {
   }
 
   const latest = findLatestYearMonth(allData);
-  const currentQuarterLabel = latest ? quarterLabel(latest.year, latest.month) : '—';
-  const prevLabel = latest ? prevQuarterLabel(latest.year, latest.month) : '—';
-  const qKey = latest ? quarterKey(latest.year, latest.month) : 'unknown';
+  const qInfo = latest ? completeQuarterInfo(latest.year, latest.month) : null;
+  const currentQuarterLabel = qInfo
+    ? quarterLabelOf(qInfo.cur.year, qInfo.cur.quarter, qInfo.cur.startMonth, qInfo.cur.endMonth)
+    : '—';
+  const prevLabel = qInfo
+    ? quarterLabelOf(qInfo.prev.year, qInfo.prev.quarter, qInfo.prev.startMonth, qInfo.prev.endMonth)
+    : '—';
+  const qKey = qInfo ? `${qInfo.cur.year}Q${qInfo.cur.quarter}` : 'unknown';
 
   return (
     <div className="p-6 max-w-6xl">
