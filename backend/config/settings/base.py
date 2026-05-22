@@ -135,6 +135,8 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^http://127\.0\.0\.1:\d+$",
 ]
 CORS_ALLOW_CREDENTIALS = True
+# 讓前端 JS 能讀到 Content-Disposition（匯出檔案下載要從 header 取檔名）
+CORS_EXPOSE_HEADERS = ["Content-Disposition"]
 
 # Session & CSRF（供填報系統跨域 cookie 使用）
 SESSION_COOKIE_SAMESITE = "Lax"
