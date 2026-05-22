@@ -15,6 +15,8 @@
 """
 from __future__ import annotations
 
+import re
+
 # 指標類型
 #   "rate":         3 列（指標 + 分子 + 分母）—— 大部分 HA01..HA09
 #   "single_value": 1 列（只有指標本身的計數值）—— 安寧個案、員工暴力、職災
@@ -302,11 +304,13 @@ SOURCE_CODE_REMAP: dict[str, str] = {
 
 
 def _norm(s: str | None) -> str:
-    """名稱比對前正規化：strip + 把連續空白壓成單一空白。其餘字元保留。"""
+    """
+    名稱比對前正規化：把所有空白（含 \\n、\\r、\\t、全形空白）壓成單一
+    半形空白，再 strip。這樣 schema 不必為了 \\r\\n vs \\n 的差異列一堆變體。
+    """
     if s is None:
         return ""
-    # 不轉全形→半形、不去掉換行（換行是名稱真實內容的一部分）
-    return " ".join(str(s).strip().split(" "))
+    return re.sub(r"[\s　]+", " ", str(s)).strip()
 
 
 # Pre-compute normalized lookup tables for O(1) check
