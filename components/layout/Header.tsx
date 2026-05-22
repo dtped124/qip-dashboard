@@ -5,6 +5,7 @@ import { Search, Upload, LogOut } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ImportWizard } from '@/components/import/ImportWizard';
+import { ExportElementListButton } from '@/components/layout/ExportElementListButton';
 import { logout } from '@/lib/entry/api';
 
 /** 即時時鐘 + 心跳脈搏，證明應用仍在運行 */
@@ -76,6 +77,9 @@ export function Header() {
             className="pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
         </div>
+
+        {/* 匯出要素清單（依當前院區） */}
+        <ExportElementListButton />
 
         {/* 匯入按鈕 */}
         <button

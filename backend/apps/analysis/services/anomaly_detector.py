@@ -94,18 +94,15 @@ def _resolve_status(anomalies: list[AnomalyResult], latest: MonthlyDataPoint | N
     unfavorable = [a for a in all_relevant if a.direction == "unfavorable"]
     favorable = [a for a in all_relevant if a.direction == "favorable"]
 
+    # 與 dashboard_bulk view 統一：watch 機制再多也不升級為 warning。
+    # 升級只發生在 anomaly 本身就是 warning/alert 級別時（如管制圖 rule1/rule2）。
     has_alert = any(a.severity == "alert" for a in unfavorable)
     has_warning = any(a.severity == "warning" for a in unfavorable)
     has_watch = any(a.severity == "watch" for a in unfavorable)
 
-    unfavorable_mechanisms = {a.mechanism for a in unfavorable}
-    multiple_unfavorable = len(unfavorable_mechanisms) >= 2
-
     if has_alert:
         return "alert"
     if has_warning:
-        return "warning"
-    if multiple_unfavorable and has_watch:
         return "warning"
     if has_watch:
         return "watch"

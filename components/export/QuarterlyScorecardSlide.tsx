@@ -121,7 +121,7 @@ export function QuarterlyScorecardSlide({ slide }: Props) {
       <text x={TABLE_LEFT} y={36} fontSize={26} fontWeight="800" fill="#1a1a1a">
         {slide.campus}院區　季度品質指標分析
       </text>
-      <text x={TABLE_LEFT + 320} y={36} fontSize={16} fontWeight="600" fill="#555">
+      <text x={TABLE_LEFT + 400} y={36} fontSize={16} fontWeight="600" fill="#555">
         {slide.prevQuarterLabel} → {slide.quarterLabel}
       </text>
 

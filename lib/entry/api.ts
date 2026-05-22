@@ -45,8 +45,23 @@ async function apiFetch<T>(
   })
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(err.detail ?? `HTTP ${res.status}`)
+    const err = await res.json().catch(() => null)
+    // DRF 回傳的錯誤格式有兩種：
+    //   { "detail": "..." }                            — 一般 API 錯
+    //   { "non_field_errors": ["..."], "欄位": [...] } — serializer 驗證錯
+    // 兩種都要能轉成人話訊息，不要只丟 "HTTP 400" 讓使用者看得霧煞煞
+    let msg: string | null = null
+    if (err && typeof err === 'object') {
+      if (typeof err.detail === 'string') msg = err.detail
+      else if (Array.isArray(err.non_field_errors) && err.non_field_errors.length) msg = String(err.non_field_errors[0])
+      else {
+        // 其他欄位錯誤：取第一個有錯誤的欄位
+        for (const [k, v] of Object.entries(err)) {
+          if (Array.isArray(v) && v.length) { msg = `${k}: ${v[0]}`; break }
+        }
+      }
+    }
+    throw new Error(msg ?? `HTTP ${res.status} ${res.statusText}`)
   }
 
   if (res.status === 204) return undefined as T
