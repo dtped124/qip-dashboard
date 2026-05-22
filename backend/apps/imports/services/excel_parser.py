@@ -20,7 +20,13 @@ from typing import Any
 import xlrd
 from openpyxl import load_workbook
 
-from apps.indicators.constants import INDICATOR_META, NAME_TO_CODE
+from apps.indicators.constants import INDICATOR_META, NAME_TO_CODE, SUBCATEGORY_DEFS
+from apps.indicators.strict_schema import (
+    STRICT_INDICATOR_SCHEMA,
+    strict_resolve_code,
+    validate_nd_names,
+    get_kind,
+)
 from .data_cleaner import clean_value, clean_value_raw, normalize_monthly_value, normalize_benchmark
 from .matching import match_indicator_name
 
@@ -32,8 +38,9 @@ class ParsedDataPoint:
     year: int
     month: int
     value: float | None
-    numerator: int | None = None
-    denominator: int | None = None
+    # 分子/分母改為 float — 部分指標 (如 HA10-09 護病比) 原本就是小數
+    numerator: float | None = None
+    denominator: float | None = None
 
 
 @dataclass
@@ -47,9 +54,21 @@ class ParsedYearlySummary:
 
 
 @dataclass
+class ParsedSubcategoryDataPoint:
+    """子分類細項計數（HA08-01 / HA10-01 等指標的子項）。"""
+    parent_code: str
+    subcategory_code: str
+    campus: str
+    year: int
+    month: int
+    value: int | None
+
+
+@dataclass
 class ParseResult:
     data_points: list[ParsedDataPoint] = field(default_factory=list)
     yearly_summaries: list[ParsedYearlySummary] = field(default_factory=list)
+    subcategory_data_points: list[ParsedSubcategoryDataPoint] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     sheets_processed: list[str] = field(default_factory=list)
 
@@ -81,27 +100,13 @@ CATEGORY_MAPPING = {
 
 
 def _resolve_code(raw_code: str, raw_name: str) -> str:
-    """Resolve indicator code from raw code and/or name."""
-    if raw_code and re.match(r"^HA\d{2}-\d{2}$", raw_code):
-        return raw_code
-
-    clean_name = raw_name.strip()
-
-    # Layer 1: Direct NAME_TO_CODE lookup
-    if clean_name in NAME_TO_CODE:
-        return NAME_TO_CODE[clean_name]
-
-    # Layer 2: Partial match (name may be truncated)
-    for key, code in NAME_TO_CODE.items():
-        if clean_name.startswith(key) or key.startswith(clean_name):
-            return code
-
-    # Layer 3: Fuzzy matching engine
-    result = match_indicator_name(clean_name)
-    if result.indicator_code and result.confidence != "unrecognized":
-        return result.indicator_code
-
-    return ""
+    """
+    解析指標代碼 — 嚴格比對版。
+    只接受名稱完全相符（strip + 壓縮空白後）的指標。任何「相似」、「包含」、
+    「模糊」一律不採用，避免 HA06-24 被誤認為 HA06-21 之類的問題。
+    """
+    code = strict_resolve_code(raw_code or "", raw_name or "")
+    return code or ""
 
 
 # ── Unified cell reader for xlrd/openpyxl ──
@@ -211,6 +216,46 @@ class _OpenpyxlSheetAdapter:
         return [self.header_value(c) for c in range(self.ncols)]
 
 
+# ── Column-layout detection ──
+
+# Matches "1月" or "115.1月" / "115-1月" / "115/1月" / "115年1月" but NOT "11月"/"12月"
+_FIRST_MONTH_RE = re.compile(r"^(?:\d{2,3}[.\-/年]\s*)?1月$")
+
+
+def _detect_columns(header_row: list[str], year: int) -> tuple[int, int, int]:
+    """Detect (code_col, name_col, month_start) from header row.
+
+    Header keywords:
+      - 代碼 → code column (e.g. 'HA01-01')
+      - 指標名稱 / 指標定義 / 分子 → name column
+      - '1月' / 'YYY.1月' → first month column
+
+    Falls back to year-based defaults if header is ambiguous.
+    """
+    code_col = -1
+    name_col = -1
+    month_start = -1
+
+    for c, h in enumerate(header_row):
+        hs = str(h).replace("\n", "").replace(" ", "").strip()
+        if not hs:
+            continue
+        if code_col < 0 and hs == "代碼":
+            code_col = c
+        if name_col < 0 and ("指標名稱" in hs or "指標定義" in hs or "分子" in hs):
+            name_col = c
+        if month_start < 0 and _FIRST_MONTH_RE.match(hs):
+            month_start = c
+
+    # Fallback to year-based defaults if detection fails
+    if name_col < 0 or month_start < 0:
+        if year == 110:
+            return -1, 2, 3
+        return 2, 3, 4
+
+    return code_col, name_col, month_start
+
+
 # ── Main parser ──
 
 def parse_qip_excel(file_bytes: bytes, file_name: str) -> ParseResult:
@@ -269,14 +314,12 @@ def parse_qip_excel(file_bytes: bytes, file_name: str) -> ParseResult:
         if adapter.nrows < 2:
             continue
 
-        # Determine column layout
-        is_110 = year == 110
-        code_col = -1 if is_110 else 2
-        name_col = 2 if is_110 else 3
-        month_start = 3 if is_110 else 4
+        # Determine column layout — detect from header (with year-based fallback)
+        header_row = adapter.header_row()
+        code_col, name_col, month_start = _detect_columns(header_row, year)
+        is_110_layout = code_col < 0  # no 代碼 column → 110-style layout
         month_end = month_start + 12
 
-        header_row = adapter.header_row()
         current_category = ""
 
         for i in range(1, adapter.nrows):
@@ -295,34 +338,152 @@ def parse_qip_excel(file_bytes: bytes, file_name: str) -> ParseResult:
                 continue
 
             # Extract code and name
-            raw_code = "" if is_110 else str(adapter.cell_value(i, code_col)).strip()
+            raw_code = "" if code_col < 0 else str(adapter.cell_value(i, code_col)).strip()
             raw_name = str(adapter.cell_value(i, name_col)).strip()
             code = _resolve_code(raw_code, raw_name)
 
             if not code:
                 result.errors.append(
-                    f"無法解析指標代碼: year={year} campus={campus} NO={int(no_val)} name={raw_name}"
+                    f"無法解析指標代碼（嚴格比對未通過）: year={year} campus={campus} NO={int(no_val)} name={raw_name}"
                 )
                 continue
 
-            # Step A: Extract adjacent-row n/d (111+ format)
+            # ── 嚴格驗證：分子/分母列名必須完全相符（rate 類指標）──
+            # 對 rate 類指標：先掃描接下來的「空 NO 列」找出分子/分母列名，
+            # 跟 STRICT_INDICATOR_SCHEMA 對照。任一不符 → 跳過該指標、寫警告。
+            # 註：subcategory / single_value 不做 n/d 驗證（沒有 n/d 結構）。
+            _kind = get_kind(code)
+            if _kind == "rate":
+                # 先掃 分子:/分母: 標記列；找不到就 fallback 用 i+1 / i+2
+                def _is_blank_no_row_local(row_idx: int) -> bool:
+                    if row_idx >= adapter.nrows:
+                        return False
+                    v = adapter.cell_value(row_idx, 1)
+                    if v == "" or v is None:
+                        return True
+                    if isinstance(v, str) and v.strip() == "":
+                        return True
+                    return False
+
+                num_row_for_validation = -1
+                den_row_for_validation = -1
+                j = i + 1
+                scan_end = min(i + 8, adapter.nrows)
+                while j < scan_end and _is_blank_no_row_local(j):
+                    text = str(adapter.cell_value(j, name_col)).strip()
+                    if num_row_for_validation < 0 and re.match(r"^分子\s*[:：]", text):
+                        num_row_for_validation = j
+                    if den_row_for_validation < 0 and re.match(r"^分母\s*[:：]", text):
+                        den_row_for_validation = j
+                    j += 1
+                # Fallback：沒有顯式標記就用 i+1 / i+2
+                if num_row_for_validation < 0 and _is_blank_no_row_local(i + 1):
+                    num_row_for_validation = i + 1
+                if den_row_for_validation < 0 and _is_blank_no_row_local(i + 2):
+                    den_row_for_validation = i + 2
+
+                num_name = str(adapter.cell_value(num_row_for_validation, name_col)).strip() if num_row_for_validation > 0 else None
+                den_name = str(adapter.cell_value(den_row_for_validation, name_col)).strip() if den_row_for_validation > 0 else None
+
+                ok, reason = validate_nd_names(code, num_name, den_name)
+                if not ok:
+                    result.errors.append(
+                        f"分子/分母列名未通過嚴格比對 → 跳過: code={code} year={year} campus={campus} {reason}"
+                    )
+                    continue
+
+            # Step A: Extract n/d from adjacent rows
+            # Two layouts supported:
+            #   (a) Inline fraction in one row: "10/100" (legacy)
+            #   (b) Separated rows: row+1 = numerator values, row+2 = denominator values
+            # Both layouts have empty 項次 in the n/d rows.
             adjacent_nd: list[dict | None] = [None] * 12
-            if not is_110 and i + 1 < adapter.nrows:
-                next_no = adapter.cell_value(i + 1, 1)
-                is_nd_row = (
-                    next_no == "" or next_no is None or
-                    (isinstance(next_no, str) and next_no.strip() == "")
-                )
-                if is_nd_row:
-                    for m in range(12):
-                        col_idx = month_start + m
-                        nd_str = str(adapter.cell_value(i + 1, col_idx)).strip()
-                        frac_match = re.search(r"\(?(\d+)\s*/\s*(\d+)\)?", nd_str)
-                        if frac_match:
-                            adjacent_nd[m] = {
-                                "numerator": int(frac_match.group(1)),
-                                "denominator": int(frac_match.group(2)),
-                            }
+
+            def _is_blank_no_row(row_idx: int) -> bool:
+                if row_idx >= adapter.nrows:
+                    return False
+                v = adapter.cell_value(row_idx, 1)
+                if v == "" or v is None:
+                    return True
+                if isinstance(v, str) and v.strip() == "":
+                    return True
+                return False
+
+            def _coerce_number(v: Any) -> float | None:
+                """保留浮點精度（HA10-09 護病比的 549.28、65.77 等不能截斷）。"""
+                if isinstance(v, bool):
+                    return None
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    if isinstance(v, float) and math.isnan(v):
+                        return None
+                    return float(v)
+                if isinstance(v, str):
+                    s = v.strip()
+                    if not s:
+                        return None
+                    try:
+                        return float(s)
+                    except ValueError:
+                        return None
+                return None
+
+            # 別名：呼叫端用同樣名稱（避免改太多行）
+            _coerce_int = _coerce_number
+
+            if i + 1 < adapter.nrows and _is_blank_no_row(i + 1):
+                # Try (a) inline-fraction layout first
+                inline_found = False
+                for m in range(12):
+                    col_idx = month_start + m
+                    nd_str = str(adapter.cell_value(i + 1, col_idx)).strip()
+                    frac_match = re.search(r"\(?(\d+)\s*/\s*(\d+)\)?", nd_str)
+                    if frac_match:
+                        adjacent_nd[m] = {
+                            "numerator": int(frac_match.group(1)),
+                            "denominator": int(frac_match.group(2)),
+                        }
+                        inline_found = True
+
+                if not inline_found:
+                    # (b1) Try explicit 分子:/分母: markers within the next blank-NO
+                    # rows. 竹東 HA05-01 places 分子/分母 on non-adjacent rows
+                    # with intermediate breakdown rows ─ scan up to 7 rows ahead.
+                    num_row_idx = -1
+                    den_row_idx = -1
+                    j = i + 1
+                    scan_end = min(i + 8, adapter.nrows)
+                    while j < scan_end and _is_blank_no_row(j):
+                        text = str(adapter.cell_value(j, name_col)).strip()
+                        # Must be 分子/分母 followed by a colon (ASCII or full-width)
+                        # to avoid matching unrelated labels like "分母案件中…"
+                        if num_row_idx < 0 and re.match(r"^分子\s*[:：]", text):
+                            num_row_idx = j
+                        if den_row_idx < 0 and re.match(r"^分母\s*[:：]", text):
+                            den_row_idx = j
+                        j += 1
+
+                    if num_row_idx > 0 and den_row_idx > 0:
+                        # Explicit markers: pick those specific rows
+                        for m in range(12):
+                            col_idx = month_start + m
+                            n_num = _coerce_int(adapter.cell_value(num_row_idx, col_idx))
+                            d_num = _coerce_int(adapter.cell_value(den_row_idx, col_idx))
+                            if n_num is not None and d_num is not None:
+                                adjacent_nd[m] = {
+                                    "numerator": n_num,
+                                    "denominator": d_num,
+                                }
+                    elif _is_blank_no_row(i + 2):
+                        # (b2) Default: row+1 = numerator, row+2 = denominator
+                        for m in range(12):
+                            col_idx = month_start + m
+                            n_num = _coerce_int(adapter.cell_value(i + 1, col_idx))
+                            d_num = _coerce_int(adapter.cell_value(i + 2, col_idx))
+                            if n_num is not None and d_num is not None:
+                                adjacent_nd[m] = {
+                                    "numerator": n_num,
+                                    "denominator": d_num,
+                                }
 
             # Step B: Check if rate indicator
             meta = INDICATOR_META.get(code)
@@ -406,7 +567,8 @@ def parse_qip_excel(file_bytes: bytes, file_name: str) -> ParseResult:
             benchmark_regional: float | None = None
             benchmark_district: float | None = None
 
-            if is_110:
+            if is_110_layout and year == 110 and len(header_row) > 16:
+                # Legacy 110 layout: cols 15/16 are benchmark
                 benchmark_regional = clean_value(adapter.cell_value(i, 15))
                 benchmark_district = clean_value(adapter.cell_value(i, 16))
             else:
@@ -442,6 +604,41 @@ def parse_qip_excel(file_bytes: bytes, file_name: str) -> ParseResult:
                 benchmark_regional=benchmark_regional,
                 benchmark_district=benchmark_district,
             ))
+
+            # ── 子分類細項擷取（HA08-01 / HA10-01）──
+            # 主指標列下方接著 N 個子分類列（NO 欄空、依固定順序）。
+            # 每列 12 個月份欄各自獨立計數，寫入 ParsedSubcategoryDataPoint。
+            # 來源 Excel 子分類數不夠時就讀到沒空白 NO 列為止，靜默忽略。
+            sub_codes = SUBCATEGORY_DEFS.get(code)
+            if sub_codes:
+                for idx, sub_code in enumerate(sub_codes):
+                    sub_row = i + 1 + idx
+                    if sub_row >= adapter.nrows:
+                        break
+                    # 必須是空 NO 列才認為是子分類列
+                    sub_no = adapter.cell_value(sub_row, 1)
+                    if sub_no not in (None, "") and not (isinstance(sub_no, str) and sub_no.strip() == ""):
+                        break
+                    for m in range(12):
+                        col_idx = month_start + m
+                        raw = adapter.cell_value(sub_row, col_idx)
+                        sub_val: int | None = None
+                        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                            if not (isinstance(raw, float) and math.isnan(raw)):
+                                sub_val = int(raw)
+                        elif isinstance(raw, str) and raw.strip():
+                            try:
+                                sub_val = int(float(raw.strip()))
+                            except ValueError:
+                                sub_val = None
+                        result.subcategory_data_points.append(ParsedSubcategoryDataPoint(
+                            parent_code=code,
+                            subcategory_code=sub_code,
+                            campus=campus,
+                            year=year,
+                            month=m + 1,
+                            value=sub_val,
+                        ))
 
     # Outlier validation
     _validate_outliers(result, nd_computed_keys)

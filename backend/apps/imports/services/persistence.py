@@ -15,6 +15,7 @@ from apps.indicators.constants import SKIP_SPC_INDICATORS
 from apps.indicators.models import (
     Alert,
     DataPoint,
+    DataPointSubcategory,
     Indicator,
     YearlySummary,
 )
@@ -75,6 +76,19 @@ def save_import_results(
                 updated_count += 1
             else:
                 unchanged_count += 1
+
+    # Save subcategory data points (HA08-01 / HA10-01 sub-rows)
+    for sdp in parse_result.subcategory_data_points:
+        DataPointSubcategory.objects.update_or_create(
+            subcategory_code=sdp.subcategory_code,
+            campus=sdp.campus,
+            year=sdp.year,
+            month=sdp.month,
+            defaults={
+                "parent_code": sdp.parent_code,
+                "value": sdp.value,
+            },
+        )
 
     # Save yearly summaries
     for summary in parse_result.yearly_summaries:

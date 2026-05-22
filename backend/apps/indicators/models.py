@@ -110,8 +110,10 @@ class DataPoint(models.Model):
     year = models.IntegerField("年度（民國年）")
     month = models.IntegerField("月份")
     value = models.FloatField("值", null=True, blank=True)
-    numerator = models.IntegerField("分子", null=True, blank=True)
-    denominator = models.IntegerField("分母", null=True, blank=True)
+    # FloatField because 護病比 (HA10-09) 等指標的分子分母是小數
+    # （例如「床位數×佔床率×3 加總」= 549.28）
+    numerator = models.FloatField("分子", null=True, blank=True)
+    denominator = models.FloatField("分母", null=True, blank=True)
     import_log = models.ForeignKey("imports.ImportLog", on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField("建立時間", auto_now_add=True)
     updated_at = models.DateTimeField("更新時間", auto_now=True)
@@ -127,6 +129,36 @@ class DataPoint(models.Model):
 
     def __str__(self):
         return f"{self.indicator_id} {self.campus} {self.year}/{self.month:02d}: {self.value}"
+
+
+class DataPointSubcategory(models.Model):
+    """
+    子分類細項計數（目前服務 HA08-01「藥物不良反應通報」4 子分類、
+    HA10-01「異常事件通報」13 子分類）。
+
+    DataPoint 只存主指標的總數；當匯入來源（如月總表）有子分類細項列時，
+    parser 額外把每個子分類的當月計數寫進這張表，供「要素清單匯出」使用。
+    """
+    parent_code = models.CharField("主指標代碼", max_length=10)        # e.g. 'HA08-01'
+    subcategory_code = models.CharField("子分類代碼", max_length=15)   # e.g. 'HA08-01-01'
+    campus = models.CharField("院區", max_length=10, choices=Campus.choices)
+    year = models.IntegerField("年度（民國年）")
+    month = models.IntegerField("月份")
+    value = models.IntegerField("計數", null=True, blank=True)
+    created_at = models.DateTimeField("建立時間", auto_now_add=True)
+    updated_at = models.DateTimeField("更新時間", auto_now=True)
+
+    class Meta:
+        db_table = "data_point_subcategories"
+        verbose_name = "子分類資料點"
+        verbose_name_plural = "子分類資料點"
+        unique_together = [("subcategory_code", "campus", "year", "month")]
+        indexes = [
+            models.Index(fields=["parent_code", "campus", "year", "month"]),
+        ]
+
+    def __str__(self):
+        return f"{self.subcategory_code} {self.campus} {self.year}/{self.month:02d}: {self.value}"
 
 
 class YearlySummary(models.Model):
