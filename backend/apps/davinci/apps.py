@@ -1,0 +1,7 @@
+from django.apps import AppConfig
+
+
+class DavinciConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.davinci"
+    verbose_name = "達文西手術品質"

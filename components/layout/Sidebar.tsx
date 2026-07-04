@@ -3,7 +3,7 @@
 import { useDashboardStore } from '@/lib/store/dashboardStore';
 import { CATEGORY_ORDER, CATEGORY_COLORS } from '@/lib/constants';
 import { Campus } from '@/lib/types';
-import { Building2, ChevronLeft, ChevronRight, Upload, Settings, BarChart3, CalendarRange } from 'lucide-react';
+import { Building2, ChevronLeft, ChevronRight, Upload, Settings, BarChart3, CalendarRange, Bot } from 'lucide-react';
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -128,6 +128,17 @@ export function Sidebar() {
         >
           <CalendarRange size={16} className="shrink-0" />
           {!collapsed && '季度分析'}
+        </Link>
+        <Link
+          href="/davinci"
+          className={`w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
+            pathname === '/davinci'
+              ? 'bg-blue-50 text-blue-700 font-medium'
+              : 'text-gray-600 hover:bg-gray-50'
+          }`}
+        >
+          <Bot size={16} className="shrink-0" />
+          {!collapsed && '達文西儀表板'}
         </Link>
         <Link
           href="/import"

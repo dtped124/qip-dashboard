@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     "apps.indicators",
     "apps.imports",
     "apps.analysis",
+    "apps.davinci",
 ]
 
 AUTH_USER_MODEL = "accounts.User"

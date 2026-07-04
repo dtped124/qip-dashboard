@@ -41,4 +41,7 @@ urlpatterns = [
 
     # 儀表板資料 API（填報系統版）
     path("api/dashboard/", include((dashboard_entry_urlpatterns, "dashboard_entry"))),
+
+    # 達文西手術品質（獨立模組，與 QIP 平行）
+    path("api/davinci/", include("apps.davinci.urls")),
 ]
