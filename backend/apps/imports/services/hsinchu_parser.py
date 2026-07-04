@@ -21,7 +21,23 @@ import xlrd
 from openpyxl import Workbook
 
 from apps.indicators.constants import INDICATOR_META
-from .excel_parser import ParseResult, ParsedDataPoint, ParsedYearlySummary, _weighted_year_avg
+from .excel_parser import (
+    ParseResult,
+    ParsedDataPoint,
+    ParsedSubcategoryDataPoint,
+    ParsedYearlySummary,
+    _weighted_year_avg,
+)
+
+
+# 新竹源檔某些 block 的 G 欄子代碼有 typo（例：HA10-01 子代碼寫成 HA10-10-NN）。
+# 一律以「父代碼前綴 + G 欄末兩碼」重組 → 確保子代碼跟 element_schema.json 對得起來。
+def _normalize_sub_code(parent_code: str, raw_sub_code: str) -> str | None:
+    """從 G 欄抽出末兩碼後與父代碼組成標準子代碼；無末兩碼回 None。"""
+    m = re.search(r"-(\d{2})$", raw_sub_code.strip())
+    if not m:
+        return None
+    return f"{parent_code}-{m.group(1)}"
 
 
 @dataclass
@@ -114,16 +130,29 @@ def _identify_blocks(rows: list[list], ncols: int) -> list[IndicatorBlock]:
         formula = str(row[5] if len(row) > 5 else "").strip()
 
         if formula == "分子":
-            # Ratio indicator: next row should be denominator
+            # Ratio indicator: locate denominator row.
+            #   策略 1：優先找 G 欄末兩碼為 "02" 的列（最可靠 — 直接對應分母 element code）
+            #   策略 2：若無，退回找 F 欄 == "分母" 的列（一般用法）
+            # 新竹 HA06-01 來源結構特殊：R37 F="分母" 但 G 欄 typo 標成 HA06-01-01
+            # 重複腹膜透析數值；真正的血液透析（HA06-01-02）在 R38 F="-"。
+            # 策略 1 能正確抓到 R38。
             denom_row = None
+            denom_row_by_g = None
+            denom_row_by_f = None
             for j in range(i + 1, len(rows)):
                 next_code = str(rows[j][2] if len(rows[j]) > 2 else "").strip()
                 if re.match(r"^HA\d{2}-\d{2}$", next_code):
                     break
+                raw_g = str(rows[j][6] if len(rows[j]) > 6 else "").strip()
+                if denom_row_by_g is None and re.search(r"-02$", raw_g):
+                    # 同時也要 G 的前綴吻合（避免抓到下一個指標的子代碼）
+                    normalized = _normalize_sub_code(code, raw_g)
+                    if normalized == f"{code}-02":
+                        denom_row_by_g = j
                 next_f = str(rows[j][5] if len(rows[j]) > 5 else "").strip()
-                if next_f == "分母":
-                    denom_row = j
-                    break
+                if denom_row_by_f is None and next_f == "分母":
+                    denom_row_by_f = j
+            denom_row = denom_row_by_g if denom_row_by_g is not None else denom_row_by_f
             blocks.append(IndicatorBlock(
                 code=code, name=name, start_row=i,
                 formula_type="ratio",
@@ -174,6 +203,44 @@ def _read_numeric(row: list, col_idx: int) -> float | None:
         return None
 
 
+def _extract_subcategories(
+    block: IndicatorBlock,
+    next_block_start: int,
+    rows: list[list],
+    monthly_cols: list[TimeCol],
+    result: ParseResult,
+) -> None:
+    """
+    從 block 區間內掃描子分類列（G 欄含 element code）→ 寫入
+    ParsedSubcategoryDataPoint。
+      • HA08-01 / HA10-01：4 / 13 個子分類（formula="加總" 區段）
+      • HA06-01：R36(num)/R37(den 重複)/R38(血液透析) — 把 R36+R38 都當子分類
+    每月空值就寫 None；不阻斷主流程。
+    """
+    scan_end = next_block_start if next_block_start > 0 else len(rows)
+    # 紀錄已寫過的子代碼避免 HA06-01 R36 / R37 重複（兩列 G 都 HA06-01-01）
+    seen: set[str] = set()
+    for ri in range(block.start_row, min(scan_end, len(rows))):
+        row = rows[ri]
+        raw_g = str(row[6] if len(row) > 6 else "").strip()
+        sub_code = _normalize_sub_code(block.code, raw_g)
+        if not sub_code:
+            continue
+        if sub_code in seen:
+            continue
+        seen.add(sub_code)
+        for tc in monthly_cols:
+            val = _read_numeric(row, tc.col)
+            result.subcategory_data_points.append(ParsedSubcategoryDataPoint(
+                parent_code=block.code,
+                subcategory_code=sub_code,
+                campus="新竹",
+                year=tc.year,
+                month=tc.month,
+                value=int(val) if val is not None else None,
+            ))
+
+
 def _process_blocks(
     blocks: list[IndicatorBlock],
     rows: list[list],
@@ -187,7 +254,9 @@ def _process_blocks(
 
     result.sheets_processed.append("新竹")
 
-    for block in blocks:
+    # 每個 block 後面接哪一列（用來界定子分類掃描範圍）
+    block_starts = [b.start_row for b in blocks]
+    for idx, block in enumerate(blocks):
         meta = INDICATOR_META.get(block.code)
         if not meta:
             result.errors.append(f"找不到指標元資料: {block.code} ({block.name})")
@@ -219,14 +288,15 @@ def _process_blocks(
 
                 month = tc.month if not is_quarterly else [0, 1, 4, 7, 10][tc.quarter]
 
+                # 保留小數精度（HA10-09 護病比的 989.9 / 117.1 等不能截斷）
                 result.data_points.append(ParsedDataPoint(
                     indicator_code=block.code,
                     campus="新竹",
                     year=tc.year,
                     month=month,
                     value=value,
-                    numerator=int(numerator) if numerator is not None else None,
-                    denominator=int(denominator) if denominator is not None else None,
+                    numerator=float(numerator) if numerator is not None else None,
+                    denominator=float(denominator) if denominator is not None else None,
                 ))
 
         elif block.formula_type == "count_total" and block.total_row is not None:
@@ -258,6 +328,13 @@ def _process_blocks(
             else:
                 result.errors.append(f"{block.code}: 找不到總計行")
             continue
+
+        # 子分類細項擷取（只跑「加總型」block：HA08-01 / HA10-01）
+        # HA06-01 的 -01/-02 已透過修正後的 numerator_row / denominator_row 走正常路徑
+        # 範圍：此 block 起，到下一個 block 起（或檔尾）止
+        if block.formula_type == "count_total":
+            next_block_start = block_starts[idx + 1] if idx + 1 < len(block_starts) else len(rows)
+            _extract_subcategories(block, next_block_start, rows, monthly_cols, result)
 
         # Build yearly summaries
         for year in all_years:

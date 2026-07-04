@@ -40,7 +40,7 @@ _HA09_REMAP_ZHUDONG = {
 # 單值（非分子/分母）指標：-01 對應 DataPoint.value
 _VALUE_INDICATORS = {"HA06-31", "HA10-02", "HA10-03"}
 
-# 子分類型指標（dashboard 只存總數，子分類留白）
+# 子分類型指標（dashboard 只存總數，子分類由 DataPointSubcategory 表查）
 _SUBCATEGORY_INDICATORS = {"HA08-01", "HA10-01"}
 
 # 院區名稱 → 檔名前綴對照（仿照 user 範本檔名）

@@ -14,15 +14,6 @@ const ALL_CAMPUSES: Campus[] = ['竹北', '竹東', '新竹'];
 
 type Tab = 'table' | 'ai';
 
-function parseLatestMonth(s: string | null): { year: number; month: number } | null {
-  if (!s) return null;
-  const m1 = s.match(/^(\d+)\.(\d+)$/);
-  if (m1) return { year: parseInt(m1[1]), month: parseInt(m1[2]) };
-  const m2 = s.match(/^(\d+)年(\d+)月$/);
-  if (m2) return { year: parseInt(m2[1]), month: parseInt(m2[2]) };
-  return null;
-}
-
 /**
  * 「最近完整季」資訊（含當季、上一季、各自的標籤與起訖月）
  * — 不直接用 latestMonth 判季，避免單月資料被當成下季數值
@@ -37,20 +28,33 @@ function quarterLabelOf(year: number, quarter: number, startMonth: number, endMo
   return `${year}年Q${quarter}（${startMonth}-${endMonth}月）`;
 }
 
+/**
+ * 找出三院區內最近一個「有實質測量資料」的月份。
+ *
+ * 過去用 `ind.latestMonth`（後端 latest_period，依 value 不為 null 判定），
+ * 但 HA08-01 / HA10-01 等指標的來源 Excel 用 =SUM(子分類)，子分類沒填時
+ * 公式輸出 0 → parser 老老實實存 value=0 → latest_period 抓到未來月份。
+ * 結果：5 月時季度分析錨點變成「115Q4 (10-12月)」。
+ *
+ * 改用 monthlyData 直接掃 numerator/denominator，跟「要素清單匯出」的
+ * 月份錨點邏輯一致。
+ */
 function findLatestYearMonth(allData: Record<string, IndicatorData[]>): { year: number; month: number } | null {
   let latestYear = 0;
   let latestMonth = 0;
   ALL_CAMPUSES.forEach(campus => {
     (allData[campus] || []).forEach(ind => {
-      if (ind.latestMonth) {
-        const parsed = parseLatestMonth(ind.latestMonth);
-        if (parsed) {
-          if (parsed.year > latestYear || (parsed.year === latestYear && parsed.month > latestMonth)) {
-            latestYear = parsed.year;
-            latestMonth = parsed.month;
+      ind.monthlyData?.forEach(dp => {
+        const n = dp.numerator;
+        const d = dp.denominator;
+        // 真實有效的測量月份至少會有 n>0 或 d>0；formula-evaluated 0 一律排除
+        if ((n != null && n > 0) || (d != null && d > 0)) {
+          if (dp.year > latestYear || (dp.year === latestYear && dp.month > latestMonth)) {
+            latestYear = dp.year;
+            latestMonth = dp.month;
           }
         }
-      }
+      });
     });
   });
   return latestYear > 0 ? { year: latestYear, month: latestMonth } : null;
