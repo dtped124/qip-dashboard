@@ -2,6 +2,29 @@
 
 import type { DavinciPeriodKey } from './types';
 
+/** 達文西手術品質面向代表色（QIP 十大類別色系之外的紫，避免混淆） */
+export const DAVINCI_COLOR = '#7C3AED';
+
+/** WER 規則短標籤（卡片/警示列 tag 用，對應 QIP 的機制標籤樣式） */
+export const WER_RULE_LABELS: Record<string, string> = {
+  Rule1: '3σ超界',
+  Rule2: '2σ警戒',
+  Rule3: '連續同側',
+  Rule4: '連續趨勢',
+  Rule5: '2/3點2σ',
+};
+
+/** 期別 key → QIP Sparkline 用的 {year, month} 座標（季取季末月） */
+export function periodToYearMonth(period: DavinciPeriodKey): { year: number; month: number } {
+  const s = String(period);
+  if (s.includes('Q')) {
+    const [y, q] = s.split('Q');
+    return { year: parseInt(y), month: parseInt(q) * 3 };
+  }
+  const n = parseInt(s);
+  return { year: Math.floor(n / 100), month: n % 100 };
+}
+
 /** 單位顯示標籤（新增單位時只改這裡） */
 export function unitLabel(unit: string): string {
   switch (unit) {

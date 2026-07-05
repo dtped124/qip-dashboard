@@ -50,15 +50,27 @@ export function Sidebar() {
         </button>
       </div>
 
-      {/* 達文西儀表板入口（切換後整個外框變為達文西模式） */}
-      <div className="border-b border-gray-200">
-        <Link
-          href="/davinci"
-          className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
-        >
-          <Bot size={16} className="shrink-0 text-blue-500" />
-          {!collapsed && <span className="font-medium">達文西儀表板</span>}
-        </Link>
+      {/* 儀表板切換（QIP / 達文西 並列；點達文西 → 整個外框切為達文西模式） */}
+      <div className={`p-3 border-b border-gray-200 ${collapsed ? 'px-2' : ''}`}>
+        {!collapsed && (
+          <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+            <Bot size={14} />
+            儀表板
+          </div>
+        )}
+        <div className={`flex ${collapsed ? 'flex-col' : ''} gap-1`}>
+          <button
+            className="flex-1 py-1.5 px-2 rounded text-sm font-medium bg-blue-600 text-white"
+          >
+            {collapsed ? 'Q' : 'QIP'}
+          </button>
+          <Link
+            href="/davinci"
+            className="flex-1 py-1.5 px-2 rounded text-sm font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 text-center transition-colors"
+          >
+            {collapsed ? '達' : '達文西'}
+          </Link>
+        </div>
       </div>
 
       {/* 院區切換 */}

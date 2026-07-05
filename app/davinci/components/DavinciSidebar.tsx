@@ -11,7 +11,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Building2, ChevronLeft, ChevronRight, LayoutDashboard } from 'lucide-react';
+import { Bot, Building2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { fetchDavinciMeta } from '../lib/api';
 import { useDavinciStore } from '../lib/store';
 import { CAMPUS_OPTIONS } from '../lib/ui';
@@ -53,6 +53,29 @@ export function DavinciSidebar() {
         >
           {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
         </button>
+      </div>
+
+      {/* 儀表板切換（QIP / 達文西 並列；點 QIP → 整個外框切回 QIP 模式） */}
+      <div className={`p-3 border-b border-gray-200 ${collapsed ? 'px-2' : ''}`}>
+        {!collapsed && (
+          <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+            <Bot size={14} />
+            儀表板
+          </div>
+        )}
+        <div className={`flex ${collapsed ? 'flex-col' : ''} gap-1`}>
+          <Link
+            href="/"
+            className="flex-1 py-1.5 px-2 rounded text-sm font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 text-center transition-colors"
+          >
+            {collapsed ? 'Q' : 'QIP'}
+          </Link>
+          <button
+            className="flex-1 py-1.5 px-2 rounded text-sm font-medium bg-blue-600 text-white"
+          >
+            {collapsed ? '達' : '達文西'}
+          </button>
+        </div>
       </div>
 
       {/* 院區切換（竹東無達文西 → 反白） */}
@@ -117,16 +140,6 @@ export function DavinciSidebar() {
         })}
       </nav>
 
-      {/* 底部：切回 QIP */}
-      <div className="border-t border-gray-200 py-2">
-        <Link
-          href="/"
-          className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
-        >
-          <LayoutDashboard size={16} className="shrink-0" />
-          {!collapsed && 'QIP 儀表板'}
-        </Link>
-      </div>
     </aside>
   );
 }
