@@ -125,6 +125,8 @@ def clean_yn(
 
     內容欄有合法值 → 強制 True（定案 #6：寧誤報不漏報），
     若原旗標非 Y 則加矛盾 flag。
+    非 Y/N 的未知值（'是'、'YES'、'V'…）視為 N 但必須標記——
+    寧可標記待補，不可靜默吞掉事件。
     """
     s = _norm(flag_raw).upper()
     flags: list[str] = []
@@ -133,8 +135,11 @@ def clean_yn(
         value = False
     elif s == "Y":
         value = True
+    elif s == "N":
+        value = False
     else:
         value = False
+        flags.append("yn_unrecognized_as_n")
     if content_has_value and not value:
         value = True
         flags.append("yn_conflict_content_wins")
@@ -143,19 +148,22 @@ def clean_yn(
 
 # ── 日期容錯解析 ──
 
-_DATE_PATTERNS = [
-    r"^(\d{4})[/-](\d{1,2})[/-](\d{1,2})",   # 2026-04-21 / 2026/5/15（含黏合時間）
-    r"^(\d{4})(\d{2})(\d{2})$",              # 20260615
-]
+# 黏合格式的時間一律為 HH:MM（2 位數時）→ 日 = 冒號前數字串去掉末 2 碼。
+# 例：'2026/5/1508:49:00AM' → 日碼段 '1508'，時 '08' → 日 15
+#     '2026/5/308:49:00AM'  → 日碼段 '308'，時 '08' → 日 3（貪婪抓 30 會誤判）
+_DATE_GLUED = re.compile(
+    r"^(\d{4})[/-](\d{1,2})[/-](\d{1,4}):\d{2}"
+)
+_DATE_PLAIN = re.compile(
+    r"^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:\s|$)"
+)
+_DATE_COMPACT = re.compile(r"^(\d{4})(\d{2})(\d{2})$")   # 20260615
 
 
 def clean_date(raw: Any) -> tuple[date | None, str, list[str]]:
     """日期：datetime 直用；字串容錯（含黏合格式 '2026/5/1508:49:00AM' 抽日期部）。
 
     回傳 (date, raw_str, flags)。解析失敗 → (None, 原字串, [date_parse_failed])。
-
-    黏合格式注意：'2026/5/1508:49:00AM' 的日應為 15，但 regex 貪婪抓 1508 的前兩碼
-    會誤判 → 以「日的合法範圍 1-31 且其後接時間」回溯修正。
     """
     if isinstance(raw, datetime):
         return raw.date(), "", []
@@ -164,23 +172,25 @@ def clean_date(raw: Any) -> tuple[date | None, str, list[str]]:
     s = _norm(raw)
     if s == "":
         return None, "", []
-    for pat in _DATE_PATTERNS:
-        m = re.match(pat, s)
-        if not m:
-            continue
+
+    y = mo = d = None
+    m = _DATE_PLAIN.match(s) or _DATE_COMPACT.match(s)
+    if m:
         y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        # 黏合格式：日抓到 4 碼（如 1508）→ 回退為前 1-2 碼
-        if d > 31:
-            d_str = m.group(3)
-            for cut in (2, 1):
-                cand = int(d_str[:cut])
-                if 1 <= cand <= 31:
-                    d = cand
-                    break
+    else:
+        m = _DATE_GLUED.match(s)
+        if m:
+            digits = m.group(3)          # 日 + 2 位數時 黏合，如 '1508' / '308'
+            if len(digits) > 2:
+                y, mo, d = int(m.group(1)), int(m.group(2)), int(digits[:-2])
+            else:
+                # 只有 1-2 碼 → 全部是日、時被冒號切走（如 '2026/5/3:49'，罕見）
+                y, mo, d = int(m.group(1)), int(m.group(2)), int(digits)
+    if y is not None:
         try:
             return date(y, mo, d), "", []
         except ValueError:
-            break
+            pass
     return None, s, ["date_parse_failed"]
 
 

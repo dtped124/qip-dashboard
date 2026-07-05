@@ -24,7 +24,9 @@ def mask_chart_no(raw: str) -> tuple[str, bool]:
     return "*" + s[-6:], True
 
 
-_MASK_CHARS = ("○", "O", "〇", "*")
+# 注意：不可把拉丁字母 O 當遮罩字元 — 外籍姓名（JOHNSON 等）含 O 會被誤判
+# 為「已遮罩」而原文入庫，違反定案 #7。僅認全形圈號與星號。
+_MASK_CHARS = ("○", "〇", "*")
 
 
 def mask_patient_name(raw: str) -> tuple[str, bool]:
@@ -32,7 +34,7 @@ def mask_patient_name(raw: str) -> tuple[str, bool]:
 
     - 2 字：遮第 2 字（'徐宏' → '徐○'）
     - 3 字以上：保留首尾、中間全遮（'李清亮' → '李○亮'、'彭林金蓮' → '彭○○蓮'）
-    - 已含遮罩字元（○ 等）原樣保留
+    - 已含遮罩字元（○/〇/*）原樣保留
     回傳 (masked, was_masked_by_system)。
     """
     s = (raw or "").strip()

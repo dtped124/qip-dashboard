@@ -9,6 +9,7 @@ import { useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, Upload, X } from 'lucide-react';
 import { confirmDavinciImport, uploadDavinciExcel } from '../lib/api';
 import type { DavinciImportPreview } from '../lib/types';
+import { periodLabel } from '../lib/ui';
 
 interface Props {
   open: boolean;
@@ -22,9 +23,11 @@ const FLAG_LABELS: Record<string, string> = {
   unit_stripped: '去除單位',
   value_unparsed: '無法解析 → 空值',
   yn_blank_as_n: '空白視為 N',
+  yn_unrecognized_as_n: '非 Y/N 的值 → 視為 N（請人工確認）',
   yn_conflict_content_wins: '旗標 N 但內容欄有值 → 視為 Y',
   unknown_event_code: '未知事件代碼',
   date_parse_failed: '日期無法解析',
+  merged_value_mismatch: '同帳號多列的手術時間/出血量不一致（已取較大值）',
 };
 
 export function ImportDialog({ open, onClose, onImported }: Props) {
@@ -176,7 +179,8 @@ export function ImportDialog({ open, onClose, onImported }: Props) {
                   <ul className="text-xs text-red-600 space-y-0.5">
                     {preview.report.conflicts.map((c, i) => (
                       <li key={i}>
-                        {c.campus} {c.period} 分頁「{c.sheet}」列 {Array.isArray(c.row) ? c.row.join(',') : c.row}：
+                        {c.campus} {periodLabel(c.period)}
+                        {c.sheet !== '-' && ` 分頁「${c.sheet}」`}列 {Array.isArray(c.row) ? c.row.join(',') : c.row}：
                         {c.field} — {FLAG_LABELS[c.flag] ?? c.flag}
                       </li>
                     ))}
@@ -208,7 +212,7 @@ export function ImportDialog({ open, onClose, onImported }: Props) {
                   <ul className="text-xs text-gray-500 mt-2 space-y-0.5">
                     {preview.report.cleaned.map((c, i) => (
                       <li key={i}>
-                        {c.campus} {c.period} 列 {c.row}：{c.field}「{c.raw}」→ {c.cleaned ?? '空值'}
+                        {c.campus} {periodLabel(c.period)} 列 {c.row}：{c.field}「{c.raw}」→ {c.cleaned ?? '空值'}
                         （{FLAG_LABELS[c.flag] ?? c.flag}）
                       </li>
                     ))}

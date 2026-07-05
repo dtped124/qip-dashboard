@@ -176,38 +176,34 @@ def parse_davinci_workbook(content: bytes, file_name: str = "") -> DavinciParseR
 
             conv_reason = str(cell(row, "conversion_reason") or "").strip()
 
-            adverse, fl = cleaner.clean_yn(
-                cell(row, "adverse_flag"),
+            def _clean_yn_field(fld: str, raw: Any, content_has_value: bool = False) -> bool:
+                """Y/N 欄清洗 + 記錄：矛盾進 conflicts、未知值進 cleaned（供人工覆核）。"""
+                value, fl_ = cleaner.clean_yn(raw, content_has_value=content_has_value)
+                for f in fl_:
+                    if f == "yn_conflict_content_wins":
+                        result.report["conflicts"].append({
+                            "sheet": ws.title, "row": row_no, "campus": campus,
+                            "period": period, "field": fld, "flag": f,
+                        })
+                    elif f == "yn_unrecognized_as_n":
+                        _record_clean(fld, raw, "N", [f])
+                flags.extend(fl_)
+                return value
+
+            adverse = _clean_yn_field(
+                "不良事件", cell(row, "adverse_flag"),
                 content_has_value=bool(adverse_codes or adverse_text),
             )
-            _record_conflict = lambda fld, fl_: [  # noqa: E731
-                result.report["conflicts"].append({
-                    "sheet": ws.title, "row": row_no, "campus": campus,
-                    "period": period, "field": fld, "flag": f,
-                }) for f in fl_ if f == "yn_conflict_content_wins"
-            ]
-            _record_conflict("不良事件", fl)
-            flags += fl
-
-            severe, fl = cleaner.clean_yn(
-                cell(row, "severe_flag"),
+            severe = _clean_yn_field(
+                "嚴重併發症", cell(row, "severe_flag"),
                 content_has_value=bool(severe_codes),
             )
-            _record_conflict("嚴重併發症", fl)
-            flags += fl
-
-            infection, fl = cleaner.clean_yn(cell(row, "infection_flag"))
-            flags += fl
-
-            conversion, fl = cleaner.clean_yn(
-                cell(row, "conversion_flag"),
+            infection = _clean_yn_field("術後感染", cell(row, "infection_flag"))
+            conversion = _clean_yn_field(
+                "術中轉換", cell(row, "conversion_flag"),
                 content_has_value=bool(conv_reason),
             )
-            _record_conflict("術中轉換", fl)
-            flags += fl
-
-            reoperation, fl = cleaner.clean_yn(cell(row, "reoperation_flag"))
-            flags += fl
+            reoperation = _clean_yn_field("再次手術", cell(row, "reoperation_flag"))
 
             adm, _, fl = cleaner.clean_date(cell(row, "admission_date"))
             flags += fl
