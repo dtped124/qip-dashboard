@@ -1,45 +1,46 @@
 'use client';
 
 /**
- * 達文西手術品質儀表板（Phase 2–4）
- * - 院區切換（竹北/新竹可選、竹東反白停用）＋ 月/季雙模式
- * - 頂部警示彙整列（本期不利方向指標）
- * - 四張統計摘要卡 + 七指標卡（評級徽章/WER 訊號）
- * - 卡片/表格/矩陣三種檢視 + 匯出 xlsx + 匯入
+ * 達文西手術品質儀表板 — 總覽（內容區）
  *
- * 與 QIP 物理隔離：本頁與下層 components/lib 全為新檔，不修改 QIP 既有程式。
+ * 標題列 / 院區切換 / 匯入匯出 由達文西外框（DavinciSidebar / DavinciHeader）
+ * 提供，操作方式與 QIP 儀表板一致；本頁只負責內容：
+ * - 頂部警示彙整列 + 四張統計摘要卡
+ * - 七指標卡（評級徽章/WER 訊號）/ 表格 / 矩陣 三檢視
+ * - 月/季切換 + 期別選擇
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, AlertTriangle, Bot, Download, LayoutGrid, Loader2, Table2, Grid3X3, Upload } from 'lucide-react';
-import { davinciExportUrl, fetchDavinciIndicators, fetchDavinciMeta } from './lib/api';
+import { AlertCircle, AlertTriangle, LayoutGrid, Loader2, Table2, Grid3X3 } from 'lucide-react';
+import { fetchDavinciIndicators, fetchDavinciMeta } from './lib/api';
 import type {
-  DavinciCampus,
   DavinciMeta,
   DavinciMode,
   DavinciPeriodGroup,
   DavinciPeriodKey,
   DavinciSpcSummary,
 } from './lib/types';
+import { useDavinciStore } from './lib/store';
+import { resolvePeriodValue } from './lib/ui';
 import { IndicatorCard } from './components/IndicatorCard';
-import { ImportDialog } from './components/ImportDialog';
 import { MatrixView, TableView } from './components/Views';
 import { RatingBadge } from './components/RatingBadge';
-import { CAMPUS_OPTIONS, resolvePeriodValue } from './lib/ui';
 
 type ViewMode = 'card' | 'table' | 'matrix';
 
 export default function DavinciPage() {
+  const campus = useDavinciStore(s => s.campus);
+  const mode = useDavinciStore(s => s.mode);
+  const setMode = useDavinciStore(s => s.setMode);
+  const dataVersion = useDavinciStore(s => s.dataVersion);
+
   const [meta, setMeta] = useState<DavinciMeta | null>(null);
-  const [campus, setCampus] = useState<DavinciCampus>('竹北');
-  const [mode, setMode] = useState<DavinciMode>('monthly');
   const [view, setView] = useState<ViewMode>('card');
   const [groups, setGroups] = useState<DavinciPeriodGroup[]>([]);
   const [spcSummary, setSpcSummary] = useState<Record<string, DavinciSpcSummary>>({});
   const [selectedPeriod, setSelectedPeriod] = useState<DavinciPeriodKey | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [importOpen, setImportOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -63,7 +64,7 @@ export default function DavinciPage() {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [campus, mode]);
+  }, [campus, mode, dataVersion]);   // dataVersion：Header 匯入完成後觸發 reload
 
   useEffect(() => { load(); }, [load]);
 
@@ -90,55 +91,9 @@ export default function DavinciPage() {
 
   return (
     <div className="space-y-4">
-      {/* 標題列 */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-            <Bot size={22} className="text-blue-600" />
-            達文西手術品質儀表板 — {campus}
-          </h1>
-          <p className="text-xs text-gray-400 mt-0.5">
-            醫院評鑑 達文西指標監測（單一面向：{meta?.category ?? '達文西手術品質'}）
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <a
-            href={davinciExportUrl(campus)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50"
-          >
-            <Download size={15} /> 匯出 xlsx
-          </a>
-          <button
-            onClick={() => setImportOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700"
-          >
-            <Upload size={15} /> 匯入資料
-          </button>
-        </div>
-      </div>
-
-      {/* 院區 + 月/季 + 期別 + 檢視切換 */}
+      {/* 月/季 + 期別 + 檢視切換 */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex gap-1">
-            {CAMPUS_OPTIONS.map(c => (
-              <button
-                key={c.name}
-                disabled={!c.enabled}
-                onClick={() => c.enabled && setCampus(c.name as DavinciCampus)}
-                title={c.enabled ? undefined : '達文西無竹東院區'}
-                className={`py-1.5 px-4 rounded text-sm font-medium transition-colors ${
-                  !c.enabled
-                    ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
-                    : campus === c.name
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                {c.name}
-              </button>
-            ))}
-          </div>
           <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
             {(['monthly', 'quarterly'] as DavinciMode[]).map(m => (
               <button
@@ -270,11 +225,6 @@ export default function DavinciPage() {
         </>
       )}
 
-      <ImportDialog
-        open={importOpen}
-        onClose={() => setImportOpen(false)}
-        onImported={load}
-      />
     </div>
   );
 }

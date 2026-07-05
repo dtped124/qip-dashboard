@@ -50,6 +50,17 @@ export function Sidebar() {
         </button>
       </div>
 
+      {/* 達文西儀表板入口（切換後整個外框變為達文西模式） */}
+      <div className="border-b border-gray-200">
+        <Link
+          href="/davinci"
+          className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
+        >
+          <Bot size={16} className="shrink-0 text-blue-500" />
+          {!collapsed && <span className="font-medium">達文西儀表板</span>}
+        </Link>
+      </div>
+
       {/* 院區切換 */}
       <div className={`p-3 border-b border-gray-200 ${collapsed ? 'px-2' : ''}`}>
         {!collapsed && (
@@ -128,17 +139,6 @@ export function Sidebar() {
         >
           <CalendarRange size={16} className="shrink-0" />
           {!collapsed && '季度分析'}
-        </Link>
-        <Link
-          href="/davinci"
-          className={`w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
-            pathname === '/davinci'
-              ? 'bg-blue-50 text-blue-700 font-medium'
-              : 'text-gray-600 hover:bg-gray-50'
-          }`}
-        >
-          <Bot size={16} className="shrink-0" />
-          {!collapsed && '達文西儀表板'}
         </Link>
         <Link
           href="/import"

@@ -51,7 +51,7 @@ export function TableView({ metas, groups, selectedPeriod, campus }: ViewProps) 
               <tr key={meta.code} className="border-b border-gray-50 hover:bg-blue-50/40">
                 <td className="px-4 py-2">
                   <Link
-                    href={`/davinci/${meta.code}?campus=${encodeURIComponent(campus)}`}
+                    href={`/davinci/${meta.code}`}
                     className="text-blue-700 hover:underline"
                   >
                     <span className="text-gray-400 mr-1">{meta.code}</span>
@@ -93,7 +93,7 @@ export function MatrixView({ metas, groups, campus }: Omit<ViewProps, 'selectedP
             <tr key={meta.code}>
               <td className="pr-3 py-1 whitespace-nowrap">
                 <Link
-                  href={`/davinci/${meta.code}?campus=${encodeURIComponent(campus)}`}
+                  href={`/davinci/${meta.code}`}
                   className="text-blue-700 hover:underline"
                 >
                   {meta.code} {meta.name}

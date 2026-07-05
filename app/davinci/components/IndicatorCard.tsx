@@ -73,7 +73,7 @@ export function IndicatorCard({ meta, groups, selectedPeriod, campus }: Props) {
 
   return (
     <Link
-      href={`/davinci/${meta.code}?campus=${encodeURIComponent(campus)}`}
+      href={`/davinci/${meta.code}`}
       className="bg-white rounded-lg border border-gray-200 p-4 flex flex-col gap-2 hover:border-blue-400 hover:shadow-sm transition-all"
     >
       <div className="flex items-start justify-between gap-2">

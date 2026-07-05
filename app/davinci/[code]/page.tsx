@@ -2,30 +2,33 @@
 
 /**
  * 達文西指標詳情頁：SPC 趨勢（I-MR / P 雙層）+ WER 訊號列表 + 逐層下鑽
- * 路徑：/davinci/DV01?campus=竹北
+ * 路徑：/davinci/DV01
+ *
+ * 院區由達文西外框（DavinciSidebar）的院區選擇控制（store），
+ * 標題列由 DavinciHeader 提供 — 操作方式與 QIP 指標詳情一致。
  */
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { AlertCircle, ArrowLeft, Loader2 } from 'lucide-react';
 import { fetchDavinciSeries } from '../lib/api';
-import type { DavinciCampus, DavinciMode, DavinciPeriodKey, DavinciSeries } from '../lib/types';
+import type { DavinciMode, DavinciPeriodKey, DavinciSeries } from '../lib/types';
+import { useDavinciStore } from '../lib/store';
+import { resolvePeriodValue, unitLabel } from '../lib/ui';
 import { SpcChart } from '../components/SpcChart';
 import { DrilldownPanel } from '../components/DrilldownPanel';
 import { RatingBadge } from '../components/RatingBadge';
-import { CAMPUS_OPTIONS, ENABLED_CAMPUSES, resolvePeriodValue, unitLabel } from '../lib/ui';
 
 export default function DavinciDetailPage() {
   const params = useParams<{ code: string }>();
-  const search = useSearchParams();
   const code = (params.code || '').toUpperCase();
-  const initialCampus = search.get('campus') || '竹北';
 
-  const [campus, setCampus] = useState<DavinciCampus>(
-    (ENABLED_CAMPUSES.includes(initialCampus) ? initialCampus : '竹北') as DavinciCampus,
-  );
-  const [mode, setMode] = useState<DavinciMode>('monthly');
+  const campus = useDavinciStore(s => s.campus);
+  const mode = useDavinciStore(s => s.mode);
+  const setMode = useDavinciStore(s => s.setMode);
+  const dataVersion = useDavinciStore(s => s.dataVersion);
+
   const [series, setSeries] = useState<DavinciSeries | null>(null);
   const [selectedPeriod, setSelectedPeriod] = useState<DavinciPeriodKey | null>(null);
   const [loading, setLoading] = useState(true);
@@ -47,7 +50,7 @@ export default function DavinciDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [code, campus, mode]);
+  }, [code, campus, mode, dataVersion]);   // dataVersion：Header 匯入完成後 reload
 
   useEffect(() => { load(); }, [load]);
 
@@ -58,7 +61,7 @@ export default function DavinciDetailPage() {
 
   return (
     <div className="space-y-4">
-      {/* 標題列 */}
+      {/* 標題列（院區/匯入匯出在外框，這裡只有指標身分與模式） */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <Link href="/davinci" className="p-1.5 rounded hover:bg-gray-100 text-gray-500">
@@ -71,39 +74,20 @@ export default function DavinciDetailPage() {
               {series && <RatingBadge rating={series.spc.rating} />}
             </h1>
             <p className="text-xs text-gray-400">
-              達文西手術品質 · {campus} · {series?.kind === 'rate' ? '比率型（越低越好）' : `連續型（${unit}，越低越好）`}
+              達文西手術品質 · {series?.kind === 'rate' ? '比率型（越低越好）' : `連續型（${unit}，越低越好）`}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex gap-1">
-            {CAMPUS_OPTIONS.map(c => (
-              <button key={c.name}
-                      disabled={!c.enabled}
-                      onClick={() => c.enabled && setCampus(c.name as DavinciCampus)}
-                      title={c.enabled ? undefined : '達文西無竹東院區'}
-                      className={`py-1.5 px-3 rounded text-sm ${
-                        !c.enabled
-                          ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
-                          : campus === c.name
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      }`}>
-                {c.name}
-              </button>
-            ))}
-          </div>
-          <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
-            {(['monthly', 'quarterly'] as DavinciMode[]).map(m => (
-              <button key={m}
-                      onClick={() => {
-                        if (m !== mode) { setMode(m); setSelectedPeriod(null); }
-                      }}
-                      className={`px-3 py-1.5 ${mode === m ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
-                {m === 'monthly' ? '月' : '季'}
-              </button>
-            ))}
-          </div>
+        <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+          {(['monthly', 'quarterly'] as DavinciMode[]).map(m => (
+            <button key={m}
+                    onClick={() => {
+                      if (m !== mode) { setMode(m); setSelectedPeriod(null); }
+                    }}
+                    className={`px-3 py-1.5 ${mode === m ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
+              {m === 'monthly' ? '月' : '季'}
+            </button>
+          ))}
         </div>
       </div>
 
