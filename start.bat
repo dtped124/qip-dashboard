@@ -25,9 +25,16 @@ docker-compose exec api python manage.py seed_admin
 docker-compose exec api python manage.py seed_entry_base
 docker-compose exec api python manage.py seed_indicators
 echo.
-echo [4/4] Clearing Next.js cache and starting frontend...
-if exist .next rmdir /s /q .next
-start "QIP-Frontend" /min cmd /c "cd /d "%~dp0" && node node_modules\next\dist\bin\next dev -p 3000"
+echo [4/4] Building frontend (production mode) and starting...
+echo       (First build takes a few minutes; please wait)
+REM 正式建置：所有頁面預先編譯，避免 dev 模式冷路由直連 404
+call npm run build
+if errorlevel 1 (
+    echo Build failed - falling back to dev mode...
+    start "QIP-Frontend" /min cmd /c "cd /d "%~dp0" && node node_modules\next\dist\bin\next dev -p 3000"
+) else (
+    start "QIP-Frontend" /min cmd /c "cd /d "%~dp0" && node node_modules\next\dist\bin\next start -p 3000"
+)
 echo Waiting for frontend to start...
 timeout /t 10 /nobreak >nul
 start "" http://localhost:3000/entry/login
