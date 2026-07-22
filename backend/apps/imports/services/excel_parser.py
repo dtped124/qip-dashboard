@@ -22,6 +22,7 @@ from openpyxl import load_workbook
 
 from apps.indicators.constants import INDICATOR_META, NAME_TO_CODE, SUBCATEGORY_DEFS
 from apps.indicators.strict_schema import (
+    SERIES_STITCH_RULES,
     STRICT_INDICATOR_SCHEMA,
     strict_resolve_code,
     validate_nd_names,
@@ -78,7 +79,12 @@ class ParseResult:
 def _parse_sheet_name(name: str) -> tuple[int, str | None]:
     """Extract ROC year and campus from sheet name. Returns (year, campus)."""
     year_match = re.search(r"(\d{3})年", name)
+    if not year_match:
+        # 部分來源檔漏打「年」（如「111竹東」）— 接受開頭的裸三位數年份
+        year_match = re.match(r"^(\d{3})(?!\d)", name)
     year = int(year_match.group(1)) if year_match else 0
+    if year and not (105 <= year <= 130):
+        year = 0
 
     if "竹北" in name and "竹東" in name:
         return year, None  # Combined sheet, skip
@@ -321,6 +327,10 @@ def parse_qip_excel(file_bytes: bytes, file_name: str) -> ParseResult:
         month_end = month_start + 12
 
         current_category = ""
+        # 本工作表已成功產出資料的指標代碼。用於：以「無項次」放寬條件納入的
+        # 變體重複列（如同一 code 的不含PAC 版本），若該 code 已解析過就跳過，
+        # 確保放寬項次判斷不會製造重複資料。有項次的列不受此限（維持原行為）。
+        emitted_codes: set[str] = set()
 
         for i in range(1, adapter.nrows):
             # Update category
@@ -330,22 +340,39 @@ def parse_qip_excel(file_bytes: bytes, file_name: str) -> ParseResult:
                 if resolved_cat:
                     current_category = resolved_cat
 
-            # Check if indicator row: Col B (NO) is positive integer
+            # Check if indicator row.
+            # 主要判準：Col B (項次) 為正整數。
+            # 例外：部分來源檔會漏填項次（如 115 竹東把 HA01-03 拆成 含/不含PAC
+            # 後刪掉了項次號），此時只要「代碼」欄有值即視為指標列。
+            # 分子/分母等子列的代碼欄一律為空，故不受影響；至於重複的變體列
+            # （如不含PAC）雖同樣以代碼解析成同一 code，仍會被後續的分子/分母
+            # 嚴格名稱驗證擋下，不會產生重複資料。
             no_val = adapter.cell_value(i, 1)
-            if not isinstance(no_val, (int, float)):
-                continue
-            if no_val != int(no_val) or no_val <= 0:
+            has_seq = (
+                isinstance(no_val, (int, float))
+                and not isinstance(no_val, bool)
+                and no_val == int(no_val)
+                and no_val > 0
+            )
+            code_cell = "" if code_col < 0 else str(adapter.cell_value(i, code_col)).strip()
+            if not has_seq and not code_cell:
                 continue
 
             # Extract code and name
-            raw_code = "" if code_col < 0 else str(adapter.cell_value(i, code_col)).strip()
+            raw_code = code_cell
             raw_name = str(adapter.cell_value(i, name_col)).strip()
             code = _resolve_code(raw_code, raw_name)
 
             if not code:
+                seq_label = int(no_val) if has_seq else "-"
                 result.errors.append(
-                    f"無法解析指標代碼（嚴格比對未通過）: year={year} campus={campus} NO={int(no_val)} name={raw_name}"
+                    f"無法解析指標代碼（嚴格比對未通過）: year={year} campus={campus} NO={seq_label} name={raw_name}"
                 )
+                continue
+
+            # 放寬項次判斷帶來的變體重複列防護：若此列靠「代碼欄有值」而非項次
+            # 被納入，且該 code 在本工作表已成功解析過，視為重複變體，跳過。
+            if not has_seq and code in emitted_codes:
                 continue
 
             # ── 嚴格驗證：分子/分母列名必須完全相符（rate 類指標）──
@@ -563,6 +590,8 @@ def parse_qip_excel(file_bytes: bytes, file_name: str) -> ParseResult:
                     denominator=denominator,
                 ))
 
+            emitted_codes.add(code)
+
             # Extract year average and benchmarks
             benchmark_regional: float | None = None
             benchmark_district: float | None = None
@@ -643,10 +672,65 @@ def parse_qip_excel(file_bytes: bytes, file_name: str) -> ParseResult:
     # Outlier validation
     _validate_outliers(result, nd_computed_keys)
 
+    # Series stitching (e.g. HA01-03-01 ≤113 年沿用 HA01-03 竹東歷史)
+    _apply_series_stitch(result)
+
     # Recalculate year averages from corrected monthly data
     _recalculate_year_averages(result)
 
     return result
+
+
+def _apply_series_stitch(result: ParseResult) -> None:
+    """依 SERIES_STITCH_RULES 將來源指標的歷史資料點複製給新指標。
+
+    執行時機夾在 _validate_outliers 之後（複製的是校正後的值，與來源
+    數列完全相同）、_recalculate_year_averages 之前（縫接年度的年均
+    自動由複製點重算）。標竿一律 None：不含PAC 無官方標竿，且來源
+    標竿屬含PAC 定義，不適用。
+    """
+    for target_code, rule in SERIES_STITCH_RULES.items():
+        src_code = rule["from_code"]
+        campus = rule["campus"]
+        up_to = rule["up_to_year"]
+
+        existing_dp = {
+            (dp.year, dp.month)
+            for dp in result.data_points
+            if dp.indicator_code == target_code and dp.campus == campus
+        }
+        cloned_years: set[int] = set()
+        for dp in list(result.data_points):
+            if (
+                dp.indicator_code == src_code
+                and dp.campus == campus
+                and dp.year <= up_to
+                and (dp.year, dp.month) not in existing_dp
+            ):
+                result.data_points.append(ParsedDataPoint(
+                    indicator_code=target_code,
+                    campus=campus,
+                    year=dp.year,
+                    month=dp.month,
+                    value=dp.value,
+                    numerator=dp.numerator,
+                    denominator=dp.denominator,
+                ))
+                cloned_years.add(dp.year)
+
+        existing_ys = {
+            s.year for s in result.yearly_summaries
+            if s.indicator_code == target_code and s.campus == campus
+        }
+        for y in sorted(cloned_years - existing_ys):
+            result.yearly_summaries.append(ParsedYearlySummary(
+                indicator_code=target_code,
+                campus=campus,
+                year=y,
+                average=None,  # 由 _recalculate_year_averages 重算
+                benchmark_regional=None,
+                benchmark_district=None,
+            ))
 
 
 def _validate_outliers(result: ParseResult, nd_computed_keys: set[str]) -> None:

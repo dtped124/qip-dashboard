@@ -36,6 +36,7 @@ ALL_CAMPUSES = ["竹北", "竹東", "新竹"]
 ZHUBEI_HSINCHU = ["竹北", "新竹"]
 ZHUDONG_HSINCHU = ["竹東", "新竹"]
 HSINCHU_ONLY = ["新竹"]
+ZHUDONG_ONLY = ["竹東"]
 
 # Complete indicator metadata - all 55 indicators
 # Each entry: {name, category, unit, is_quarterly, direction, campuses, aliases, data_nature}
@@ -43,7 +44,9 @@ INDICATOR_META: dict[str, dict] = {
     # 整體照護 — binomial_rate
     "HA01-01": {"name": "住院死亡率(含病危自動出院)", "category": "整體照護", "unit": "percent", "is_quarterly": False, "direction": "lower", "campuses": ALL_CAMPUSES, "aliases": ["住院死亡千分率"], "data_nature": "binomial_rate"},
     "HA01-02": {"name": "出院14天內因相同或相關病情非計畫性再住院率", "category": "整體照護", "unit": "percent", "is_quarterly": False, "direction": "lower", "campuses": ALL_CAMPUSES, "aliases": ["非計畫再住院率", "14天再住院"], "data_nature": "binomial_rate"},
-    "HA01-03": {"name": "急性病床住院案件住院日數超過30日比率", "category": "整體照護", "unit": "percent", "is_quarterly": False, "direction": "lower", "campuses": ALL_CAMPUSES, "aliases": ["住院超過30日", "住院日數超過三十日", "住院日數超過30日", "住院超過30天"], "data_nature": "binomial_rate"},
+    "HA01-03": {"name": "急性病床住院案件住院日數超過30日比率(含PAC)", "category": "整體照護", "unit": "percent", "is_quarterly": False, "direction": "lower", "campuses": ALL_CAMPUSES, "aliases": ["住院超過30日", "住院日數超過三十日", "住院日數超過30日", "住院超過30天"], "data_nature": "binomial_rate"},
+    # 竹東專屬：115 起 HA01-03 拆分出的不含PAC 監測數列（QIP 對外填報用含PAC 版）
+    "HA01-03-01": {"name": "急性病床住院案件住院日數超過30日比率(不含PAC)", "category": "整體照護", "unit": "percent", "is_quarterly": False, "direction": "lower", "campuses": ZHUDONG_ONLY, "aliases": ["住院超過30日不含PAC", "排除PAC"], "data_nature": "binomial_rate"},
 
     # 加護照護 — percent: binomial_rate, permille: poisson_rate
     "HA02-01": {"name": "48小時(含)內加護病房重返率", "category": "加護照護", "unit": "percent", "is_quarterly": False, "direction": "lower", "campuses": ALL_CAMPUSES, "aliases": ["ICU重返率", "加護病房重返"], "data_nature": "binomial_rate"},
