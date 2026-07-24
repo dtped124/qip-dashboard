@@ -73,12 +73,16 @@ class TestZhubei4MonthSummary:
         assert "115年QIP指標(竹北)" in result.sheets_processed
 
     def test_dp_count_per_year(self, result):
-        # 33 indicators × 12 months = 396 per year for years 110–115
-        # (33 listed but some collapse — actual is 33; check year 115 specifically)
+        # 4月總表：115 年只有 1–4 月為實質資料月，未填報月份不得產出
+        # （公式殘留的假 0 不進資料庫）
         by_year = {}
         for d in result.data_points:
             by_year[d.year] = by_year.get(d.year, 0) + 1
-        assert by_year.get(115, 0) >= 300  # all 25+ rate-style indicators × 12
+        assert by_year.get(115, 0) >= 100  # all 25+ rate-style indicators × 4
+        # 此檔 J87（HA10-01 6月欄）有人工預填的 40，整欄僅此一格非零 →
+        # 實質月判定 fail-open 納入 6 月；5 月與 7-12 月全為公式假 0/空白，不得產出
+        months_115 = {d.month for d in result.data_points if d.year == 115}
+        assert months_115 == {1, 2, 3, 4, 6}, f"115 年實質月不符: {sorted(months_115)}"
 
     def test_ha01_01_april_values(self, result):
         # 住院死亡率 4月: n=29, d=1133, value ≈ 2.5596%
@@ -324,9 +328,11 @@ class TestZhudong6MonthSummary:
             assert ys[y].benchmark_district is None
 
     def test_ha01_03_still_intact_after_stitch(self, result):
-        # 拼接不得動到來源數列：HA01-03 竹東各年皆維持 12 筆 parser 輸出
+        # 拼接不得動到來源數列：HA01-03 竹東完整年度維持 12 筆 parser 輸出；
+        # 115 年（6月總表）僅 1–6 月為實質資料月，未填報月份不產出
         from collections import Counter
         per_year = Counter(d.year for d in result.data_points
                            if d.indicator_code == "HA01-03" and d.campus == "竹東")
         for y, cnt in per_year.items():
-            assert cnt == 12, f"HA01-03 竹東 {y} 年應有 12 筆，實得 {cnt}"
+            exp = 6 if y == 115 else 12
+            assert cnt == exp, f"HA01-03 竹東 {y} 年應有 {exp} 筆，實得 {cnt}"

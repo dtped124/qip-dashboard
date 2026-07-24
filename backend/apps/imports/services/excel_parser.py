@@ -262,6 +262,24 @@ def _detect_columns(header_row: list[str], year: int) -> tuple[int, int, int]:
     return code_col, name_col, month_start
 
 
+def _detect_substantive_months(adapter, month_start: int) -> list[bool]:
+    """月 m 有實質數據 ⟺ 該月欄任一資料列 (row>=1) 清洗後為非零數值或帶非零 n/d。
+
+    來源總表的未填報月份仍可能因公式殘留（SUM 空範圍 → 0、#DIV/0!）讀到假 0；
+    真實填報月必有出院人次/急診總人次等大量非零儲存格，整欄全為 0/空白/錯誤值
+    的月份不可能是真實資料，一律略過不產出，避免幽靈 0 進資料庫。
+    """
+    flags = [False] * 12
+    for m in range(12):
+        col = month_start + m
+        for r in range(1, adapter.nrows):  # row 0 = header，排除
+            cr = clean_value_raw(adapter.cell_value(r, col))
+            if (cr.value is not None and cr.value != 0) or cr.numerator or cr.denominator:
+                flags[m] = True
+                break
+    return flags
+
+
 # ── Main parser ──
 
 def parse_qip_excel(file_bytes: bytes, file_name: str) -> ParseResult:
@@ -325,6 +343,7 @@ def parse_qip_excel(file_bytes: bytes, file_name: str) -> ParseResult:
         code_col, name_col, month_start = _detect_columns(header_row, year)
         is_110_layout = code_col < 0  # no 代碼 column → 110-style layout
         month_end = month_start + 12
+        substantive = _detect_substantive_months(adapter, month_start)
 
         current_category = ""
         # 本工作表已成功產出資料的指標代碼。用於：以「無項次」放寬條件納入的
@@ -518,6 +537,8 @@ def parse_qip_excel(file_bytes: bytes, file_name: str) -> ParseResult:
 
             # Step C: Extract monthly values
             for m in range(12):
+                if not substantive[m]:
+                    continue
                 col_idx = month_start + m
                 # Only use cell_for_clean (% format handling) for rate indicators
                 # Count/continuous indicators: read raw value to avoid ×100 on counts
@@ -649,6 +670,8 @@ def parse_qip_excel(file_bytes: bytes, file_name: str) -> ParseResult:
                     if sub_no not in (None, "") and not (isinstance(sub_no, str) and sub_no.strip() == ""):
                         break
                     for m in range(12):
+                        if not substantive[m]:
+                            continue
                         col_idx = month_start + m
                         raw = adapter.cell_value(sub_row, col_idx)
                         sub_val: int | None = None
