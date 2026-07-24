@@ -188,6 +188,8 @@ export function StatusMatrix({ indicators, year }: Props) {
           ind.peerValue,
           ind.meta.direction,
           ind.controlChart,
+          // 聚合後的季值與後端月粒度警示對不上，僅原生粒度時採用
+          needsAggregation ? undefined : ind.monthlyAlerts,
         );
         periodStatuses.set(periodKey, status);
       }

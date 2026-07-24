@@ -25,6 +25,10 @@ FILE_ZHUDONG = (
     r"C:\Users\akcho\Downloads"
     r"\東115年醫院評鑑持續性監測指標-臨床指標_4月總表_給主任-竹東.xlsx"
 )
+FILE_ZHUDONG_JUN = (
+    r"C:\Users\akcho\Downloads"
+    r"\東115年醫院評鑑持續性監測指標-臨床指標_6月總表_給主任-竹東.xlsx"
+)
 
 
 class TestDetectColumns:
@@ -69,12 +73,16 @@ class TestZhubei4MonthSummary:
         assert "115年QIP指標(竹北)" in result.sheets_processed
 
     def test_dp_count_per_year(self, result):
-        # 33 indicators × 12 months = 396 per year for years 110–115
-        # (33 listed but some collapse — actual is 33; check year 115 specifically)
+        # 4月總表：115 年只有 1–4 月為實質資料月，未填報月份不得產出
+        # （公式殘留的假 0 不進資料庫）
         by_year = {}
         for d in result.data_points:
             by_year[d.year] = by_year.get(d.year, 0) + 1
-        assert by_year.get(115, 0) >= 300  # all 25+ rate-style indicators × 12
+        assert by_year.get(115, 0) >= 100  # all 25+ rate-style indicators × 4
+        # 此檔 J87（HA10-01 6月欄）有人工預填的 40，整欄僅此一格非零 →
+        # 實質月判定 fail-open 納入 6 月；5 月與 7-12 月全為公式假 0/空白，不得產出
+        months_115 = {d.month for d in result.data_points if d.year == 115}
+        assert months_115 == {1, 2, 3, 4, 6}, f"115 年實質月不符: {sorted(months_115)}"
 
     def test_ha01_01_april_values(self, result):
         # 住院死亡率 4月: n=29, d=1133, value ≈ 2.5596%
@@ -188,3 +196,143 @@ class TestZhudong4MonthSummary:
             if d.year == 115 and d.campus == "竹東" and d.numerator is not None
         )
         assert count >= 80
+
+
+@pytest.mark.skipif(
+    not os.path.exists(FILE_ZHUDONG_JUN),
+    reason="Source spreadsheet not present in this environment",
+)
+class TestZhudong6MonthSummary:
+    """竹東 6月總表 — 115年竹東 分頁把 HA01-03 拆成 含/不含PAC：
+
+    含PAC 主列被刪掉了項次號（Col B 空白）、且指標名與分子列名多了「(含PAC)」
+    後綴。修正前這會讓 HA01-03 115 竹東 整筆匯不進來（項次空白 → 不被視為指標
+    列；名稱嚴格比對也不符）。修正後：
+      1. 代碼欄有值即視為指標列（放寬項次判斷）；
+      2. schema 白名單納入「(含PAC)」變體名稱；
+      3. 不含PAC 變體（排除PAC）仍被分子/分母嚴格比對擋下，不產生重複。
+    """
+
+    @pytest.fixture(scope="class")
+    def result(self):
+        with open(FILE_ZHUDONG_JUN, "rb") as f:
+            data = f.read()
+        return parse_qip_excel(data, os.path.basename(FILE_ZHUDONG_JUN))
+
+    def test_ha01_03_all_six_months_present(self, result):
+        # 含PAC 主列雖無項次，仍須解析出 1–6 月完整數值
+        expects = {
+            1: (5, 157, 3.1847),
+            2: (7, 127, 5.5118),
+            3: (7, 148, 4.7297),
+            4: (7, 134, 5.2239),
+            5: (2, 123, 1.6260),  # 修正前遺失
+            6: (7, 142, 4.9296),  # 修正前遺失
+        }
+        for m, (exp_n, exp_d, exp_v) in expects.items():
+            dp = next(
+                (d for d in result.data_points
+                 if d.indicator_code == "HA01-03" and d.campus == "竹東"
+                 and d.year == 115 and d.month == m),
+                None,
+            )
+            assert dp is not None, f"HA01-03 竹東 115/{m} 應存在"
+            assert dp.numerator == exp_n, f"month {m}: n={dp.numerator}, expected {exp_n}"
+            assert dp.denominator == exp_d, f"month {m}: d={dp.denominator}, expected {exp_d}"
+            assert dp.value == pytest.approx(exp_v, abs=0.01)
+
+    def test_ha01_03_no_duplicate_from_pac_variant(self, result):
+        # 不含PAC 變體不得產生重複的 (year, month) 資料點
+        keys = [
+            (d.year, d.month) for d in result.data_points
+            if d.indicator_code == "HA01-03" and d.campus == "竹東" and d.year == 115
+        ]
+        assert len(keys) == len(set(keys)), f"HA01-03 竹東 115 有重複月份: {keys}"
+
+    # ── HA01-03-01（不含PAC，竹東專屬）──────────────────────────
+
+    def _dp(self, result, code, year, month):
+        return next(
+            (d for d in result.data_points
+             if d.indicator_code == code and d.campus == "竹東"
+             and d.year == year and d.month == month),
+            None,
+        )
+
+    def test_ha01_03_01_115_own_values(self, result):
+        # 115 分頁第 98-100 列（代碼 HA01-03-01、項次空白）
+        expects = {
+            1: (3, 157, 1.9108), 2: (3, 127, 2.3622), 3: (2, 148, 1.3514),
+            4: (3, 134, 2.2388), 5: (0, 123, 0.0), 6: (3, 142, 2.1127),
+        }
+        for m, (exp_n, exp_d, exp_v) in expects.items():
+            dp = self._dp(result, "HA01-03-01", 115, m)
+            assert dp is not None, f"HA01-03-01 竹東 115/{m} 應存在"
+            assert dp.numerator == exp_n, f"115/{m}: n={dp.numerator}, expected {exp_n}"
+            assert dp.denominator == exp_d, f"115/{m}: d={dp.denominator}, expected {exp_d}"
+            assert dp.value == pytest.approx(exp_v, abs=0.01)
+
+    def test_ha01_03_01_114_own_values(self, result):
+        # 114 分頁第 101-103 列（代碼 HA01-03-01 的新區塊；
+        # 第 95-97 列代碼仍為 HA01-03 的舊區塊須被略過）
+        expects = {
+            1: (2, 133, 1.5038), 2: (2, 164, 1.2195), 3: (2, 167, 1.1976),
+            4: (1, 165, 0.6061), 5: (1, 157, 0.6369), 6: (0, 138, 0.0),
+            7: (4, 142, 2.8169), 8: (0, 161, 0.0), 9: (3, 133, 2.2556),
+            10: (3, 155, 1.9355), 11: (0, 145, 0.0), 12: (2, 168, 1.1905),
+        }
+        for m, (exp_n, exp_d, exp_v) in expects.items():
+            dp = self._dp(result, "HA01-03-01", 114, m)
+            assert dp is not None, f"HA01-03-01 竹東 114/{m} 應存在"
+            assert dp.numerator == exp_n, f"114/{m}: n={dp.numerator}, expected {exp_n}"
+            assert dp.denominator == exp_d, f"114/{m}: d={dp.denominator}, expected {exp_d}"
+            assert dp.value == pytest.approx(exp_v, abs=0.01)
+
+    def test_ha01_03_01_stitched_years_equal_source(self, result):
+        # ≤113 年：HA01-03-01 的點集合必須與 HA01-03 竹東完全相等（逐值複製）
+        src = {(d.year, d.month): (d.value, d.numerator, d.denominator)
+               for d in result.data_points
+               if d.indicator_code == "HA01-03" and d.campus == "竹東" and d.year <= 113}
+        tgt = {(d.year, d.month): (d.value, d.numerator, d.denominator)
+               for d in result.data_points
+               if d.indicator_code == "HA01-03-01" and d.campus == "竹東" and d.year <= 113}
+        assert src == tgt
+        # 錨點抽查（季合併版型 → 只有 1/4/7/10 月有值）
+        anchors = {
+            (113, 1): (8, 408, 1.9608),
+            (112, 4): (2, 455, 0.4396),   # n/d 勝過儲存格 43.956 的已知 typo
+            (111, 1): (8, 414, 1.9324),   # 靠「111竹東」分頁名修正才存在
+            (110, 7): (11, 216, 5.0926),
+        }
+        for (y, m), (exp_n, exp_d, exp_v) in anchors.items():
+            dp = self._dp(result, "HA01-03-01", y, m)
+            assert dp is not None, f"HA01-03-01 竹東 {y}/{m} 應存在（拼接）"
+            assert dp.numerator == exp_n
+            assert dp.denominator == exp_d
+            assert dp.value == pytest.approx(exp_v, abs=0.01)
+
+    def test_ha01_03_01_no_duplicates(self, result):
+        keys = [(d.year, d.month) for d in result.data_points
+                if d.indicator_code == "HA01-03-01" and d.campus == "竹東"]
+        assert len(keys) == len(set(keys)), f"HA01-03-01 竹東 有重複月份: {sorted(keys)}"
+
+    def test_ha01_03_01_yearly_summaries_stitched(self, result):
+        ys = {s.year: s for s in result.yearly_summaries
+              if s.indicator_code == "HA01-03-01" and s.campus == "竹東"}
+        for y in (110, 111, 112, 113, 114, 115):
+            assert y in ys, f"HA01-03-01 竹東 {y} 年度摘要應存在"
+            assert ys[y].average is not None, f"{y} 年均應有值"
+        # 拼接年度標竿一律 None（不含PAC 無官方標竿）
+        for y in (110, 111, 112, 113):
+            assert ys[y].benchmark_regional is None
+            assert ys[y].benchmark_district is None
+
+    def test_ha01_03_still_intact_after_stitch(self, result):
+        # 拼接不得動到來源數列：HA01-03 竹東完整年度維持 12 筆 parser 輸出；
+        # 115 年（6月總表）僅 1–6 月為實質資料月，未填報月份不產出
+        from collections import Counter
+        per_year = Counter(d.year for d in result.data_points
+                           if d.indicator_code == "HA01-03" and d.campus == "竹東")
+        for y, cnt in per_year.items():
+            exp = 6 if y == 115 else 12
+            assert cnt == exp, f"HA01-03 竹東 {y} 年應有 {exp} 筆，實得 {cnt}"

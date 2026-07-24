@@ -19,6 +19,7 @@ import type {
   DataNature,
   Direction,
   IndicatorUnit,
+  MonthlyAlert,
 } from './types';
 import { INDICATOR_META } from './constants';
 
@@ -68,6 +69,7 @@ interface DashboardItem {
   peer_source: string | null;
   trend: string;
   latest_anomalies: { mechanism: string; severity: string; message: string }[];
+  monthly_alerts: { year: number; month: number; severity: string; mechanism: string }[];
 }
 
 interface DashboardResponse {
@@ -145,6 +147,12 @@ export async function loadDashboardFromAPI(campus: Campus): Promise<IndicatorDat
         month: item.latest_period ? parseInt(item.latest_period.split('.')[1]) : undefined,
       })),
       controlChart: null,
+      monthlyAlerts: (item.monthly_alerts || []).map(a => ({
+        year: a.year,
+        month: a.month,
+        severity: a.severity as MonthlyAlert['severity'],
+        mechanism: a.mechanism as AnomalyResult['mechanism'],
+      })),
     };
   });
 }

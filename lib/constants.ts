@@ -72,12 +72,15 @@ const all3: Campus[] = ['竹北', '竹東', '新竹'];
 const zhubeiHsinchu: Campus[] = ['竹北', '新竹'];
 const zhudongHsinchu: Campus[] = ['竹東', '新竹'];
 const hsinchu: Campus[] = ['新竹'];
+const zhudong: Campus[] = ['竹東'];
 
 export const INDICATOR_META: Record<string, Omit<IndicatorMeta, 'code'>> = {
   // 整體照護 — binomial_rate（分子=事件數 / 分母=總人次）
   'HA01-01': { name: '住院死亡率(含病危自動出院)', category: '整體照護', unit: 'percent', isQuarterly: false, direction: 'lower', isReverse: false, campuses: all3, source: 'preset', aliases: ['住院死亡千分率'], isActive: true, dataNature: 'binomial_rate' },
   'HA01-02': { name: '出院14天內因相同或相關病情非計畫性再住院率', category: '整體照護', unit: 'percent', isQuarterly: false, direction: 'lower', isReverse: false, campuses: all3, source: 'preset', aliases: ['非計畫再住院率', '14天再住院'], isActive: true, dataNature: 'binomial_rate' },
-  'HA01-03': { name: '急性病床住院案件住院日數超過30日比率', category: '整體照護', unit: 'percent', isQuarterly: false, direction: 'lower', isReverse: false, campuses: all3, source: 'preset', aliases: ['住院超過30日', '住院日數超過三十日', '住院日數超過30日', '住院超過30天'], isActive: true, dataNature: 'binomial_rate' },
+  'HA01-03': { name: '急性病床住院案件住院日數超過30日比率(含PAC)', category: '整體照護', unit: 'percent', isQuarterly: false, direction: 'lower', isReverse: false, campuses: all3, source: 'preset', aliases: ['住院超過30日', '住院日數超過三十日', '住院日數超過30日', '住院超過30天'], isActive: true, dataNature: 'binomial_rate' },
+  // 竹東專屬：115 起 HA01-03 拆分出的不含PAC 監測數列（≤113 沿用 HA01-03 歷史）
+  'HA01-03-01': { name: '急性病床住院案件住院日數超過30日比率(不含PAC)', category: '整體照護', unit: 'percent', isQuarterly: false, direction: 'lower', isReverse: false, campuses: zhudong, source: 'preset', aliases: ['住院超過30日不含PAC', '排除PAC'], isActive: true, dataNature: 'binomial_rate' },
 
   // 加護照護 — percent: binomial_rate, permille: poisson_rate
   'HA02-01': { name: '48小時(含)內加護病房重返率', category: '加護照護', unit: 'percent', isQuarterly: false, direction: 'lower', isReverse: false, campuses: all3, source: 'preset', aliases: ['ICU重返率', '加護病房重返'], isActive: true, dataNature: 'binomial_rate' },
@@ -283,7 +286,7 @@ export const HSINCHU_TCPI_EXCLUDE: ReadonlySet<string> = new Set([
 ]);
 
 // 注意：以下 QIP 指標在 TCPI 無直接對應（所有院區皆無法配對）
-// HA01-03: 住院日數超過30日比率 — TCPI 無
+// HA01-03 / HA01-03-01: 住院日數超過30日比率(含/不含PAC) — TCPI 無
 // HA02-11~13: 加護病房 VAP/CAUTI/CLABSI — TCPI 依 ICU 科別拆分，無全院合併值
 // HA03-01: 手術後48小時內死亡率 — TCPI 無直接對應
 // HA05-01~03: 急診指標 — TCPI 無

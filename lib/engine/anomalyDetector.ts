@@ -5,6 +5,7 @@ import type {
   IndicatorStatus,
   Direction,
   DataNature,
+  MonthlyAlert,
 } from '../types';
 import { selectChartType, computeControlChartParams, detectControlChartAnomalies } from './controlChart';
 import { detectMonthlyChanges } from './monthlyChange';
@@ -124,6 +125,10 @@ function resolveStatus(
 
 /**
  * 計算特定月份的狀態（用於狀態矩陣）
+ *
+ * @param backendAlerts 後端 Alert 表的逐月警示（含管制圖規則）。前端批次載入
+ *   拿不到管制圖參數，2σ/3σ 類異常一律以此為準，與詳情頁的後端引擎同源；
+ *   本函式自算的月增減/同儕機制與其聯集後再綜合判定（同機制自動去重）。
  */
 export function computeMonthStatus(
   allData: MonthlyDataPoint[],
@@ -131,7 +136,8 @@ export function computeMonthStatus(
   targetMonth: number,
   peerValue: number | null,
   direction: Direction,
-  controlChart: ControlChartParams | null
+  controlChart: ControlChartParams | null,
+  backendAlerts?: MonthlyAlert[]
 ): IndicatorStatus {
   const sorted = [...allData]
     .filter(dp => dp.value !== null)
@@ -221,6 +227,22 @@ export function computeMonthStatus(
       targetMonth
     );
     if (peerAnomaly) anomalies.push(peerAnomaly);
+  }
+
+  // 後端逐月警示併入（Alert 表僅存不利異常）
+  if (backendAlerts) {
+    for (const a of backendAlerts) {
+      if (a.year !== targetYear || a.month !== targetMonth) continue;
+      anomalies.push({
+        mechanism: a.mechanism,
+        severity: a.severity,
+        direction: 'unfavorable',
+        message: '',
+        value: targetPoint.value ?? 0,
+        year: a.year,
+        month: a.month,
+      });
+    }
   }
 
   // 判定
