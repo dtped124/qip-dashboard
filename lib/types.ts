@@ -197,6 +197,14 @@ export interface AnomalyResult {
 
 // === 組合型別（UI 顯示用） ===
 
+/** 後端 Alert 表的逐月異常（狀態矩陣著色用，與詳情頁分析同源） */
+export interface MonthlyAlert {
+  year: number;
+  month: number;
+  severity: 'alert' | 'warning' | 'watch';
+  mechanism: AnomalyResult['mechanism'];
+}
+
 export interface IndicatorData {
   meta: IndicatorMeta;
   campus: Campus;
@@ -212,6 +220,8 @@ export interface IndicatorData {
   peerSource: 'TCPI' | 'peer' | null;  // 標竿資料來源（TCPI = 台灣臨床成效指標，peer = 月報表同儕欄）
   anomalies: AnomalyResult[];
   controlChart: ControlChartParams | null;
+  /** 後端逐月警示（僅儀表板批次載入路徑提供；詳情頁沿用即時分析） */
+  monthlyAlerts?: MonthlyAlert[];
 }
 
 // === UI 狀態 ===

@@ -485,6 +485,18 @@ def dashboard_bulk(request):
         # Unfavorable count
         unfavorable_count = len(unfavorable)
 
+        # Per-month alerts — 狀態矩陣逐月著色用（與詳情頁同源的後端引擎結果）
+        monthly_alerts = [
+            {
+                "year": a["year"],
+                "month": a["month"],
+                "severity": a["severity"],
+                "mechanism": a["mechanism"],
+            }
+            for a in alerts
+            if a["year"] is not None and a["month"] is not None
+        ]
+
         result.append({
             "code": code,
             "name": ind.name,
@@ -506,6 +518,7 @@ def dashboard_bulk(request):
             "peer_source": peer_source,
             "trend": trend,
             "latest_anomalies": latest_anomalies,
+            "monthly_alerts": monthly_alerts,
         })
 
     return Response({"data": result, "total": len(result), "campus": campus})
