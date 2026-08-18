@@ -84,17 +84,17 @@ export function ControlChart({ dataPoints, controlChart, anomalies, direction, u
   const [showAll, setShowAll] = useState(false);
   const displayData = (canExpand && !showAll) ? chartData.slice(-VISIBLE_WINDOW) : chartData;
 
-  // Y 軸範圍
-  const allValues = sorted.map(dp => dp.value as number);
-  const allUcls = hasVariableLimits
-    ? variableLimits.map(vl => vl.ucl)
+  // Y 軸範圍：只看可見視窗，否則被裁掉的月份仍會撐高軸而留下大片空白
+  const visibleValues = displayData.map(dp => dp.value as number);
+  const visibleUcls = hasVariableLimits
+    ? displayData.map(dp => dp.varUcl as number)
     : [ucl];
-  const allLcls = hasVariableLimits
-    ? variableLimits.map(vl => vl.lcl)
+  const visibleLcls = hasVariableLimits
+    ? displayData.map(dp => dp.varLcl as number)
     : [lcl];
 
-  const minVal = Math.min(...allValues, ...allLcls, peerValue ?? Infinity);
-  const maxVal = Math.max(...allValues, ...allUcls, peerValue ?? -Infinity);
+  const minVal = Math.min(...visibleValues, ...visibleLcls, peerValue ?? Infinity);
+  const maxVal = Math.max(...visibleValues, ...visibleUcls, peerValue ?? -Infinity);
   const padding = (maxVal - minVal) * 0.15 || 1;
   const yMin = Math.max(0, minVal - padding);
   const yMax = maxVal + padding;
