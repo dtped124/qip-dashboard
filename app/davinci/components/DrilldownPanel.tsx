@@ -24,6 +24,8 @@ interface Props {
   campus: DavinciCampus;
   period: DavinciPeriodKey;
   periodLabel: string;
+  /** 選取範圍變動時通知父層（供「完整數據」跟隨）。必須是穩定的 callback。 */
+  onScopeChange?: (scope: { dept?: string; surgeon?: string }) => void;
 }
 
 interface Crumb {
@@ -33,7 +35,7 @@ interface Crumb {
   order?: string;
 }
 
-export function DrilldownPanel({ code, kind, unit, campus, period, periodLabel }: Props) {
+export function DrilldownPanel({ code, kind, unit, campus, period, periodLabel, onScopeChange }: Props) {
   const [crumb, setCrumb] = useState<Crumb>({ level: 'dept' });
   const [rows, setRows] = useState<DrilldownRow[]>([]);
   const [cases, setCases] = useState<DavinciCaseRow[]>([]);
@@ -78,6 +80,14 @@ export function DrilldownPanel({ code, kind, unit, campus, period, periodLabel }
   useEffect(() => {
     load(crumb);
   }, [crumb, load]);
+
+  // 範圍通知：掛在 crumb 上而非 go()，因為上面的 reset effect 也會 setCrumb，
+  // 只在 go() 通知會讓切換院區/指標後的範圍殘留。
+  // 依賴取兩個字串而非 crumb 物件：order → cases 這種只改 level 的導覽不該重打 API。
+  // 刻意不含 order —— 一台刀可計入多個術式，跟隨術式會讓分母加總超過全院區。
+  useEffect(() => {
+    onScopeChange?.({ dept: crumb.dept, surgeon: crumb.surgeon });
+  }, [crumb.dept, crumb.surgeon, onScopeChange]);
 
   const go = (c: Crumb) => setCrumb(c);
 

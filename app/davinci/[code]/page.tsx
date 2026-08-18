@@ -12,7 +12,7 @@
  * （僅 import，未修改 QIP 原始檔）。
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { ArrowLeft, Calendar, CalendarDays } from 'lucide-react';
@@ -27,7 +27,7 @@ import { AIAnalysisPanel } from '@/components/ai/AIAnalysisPanel';
 import type { PromptInput } from '@/lib/ai/promptBuilder';
 import type { Campus } from '@/lib/types';
 import { fetchDavinciSeries } from '../lib/api';
-import type { DavinciMode, DavinciSeries } from '../lib/types';
+import type { DavinciMode, DavinciScope, DavinciSeries } from '../lib/types';
 import { useDavinciStore } from '../lib/store';
 import { DAVINCI_COLOR, unitLabel } from '../lib/ui';
 import {
@@ -67,6 +67,63 @@ export default function DavinciDetailPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // ── 下鑽範圍 → 只影響「完整數據」表格（管制圖/年度比較維持全院區）──
+  const [scope, setScope] = useState<DavinciScope>({});
+  const [scopedSeries, setScopedSeries] = useState<DavinciSeries | null>(null);
+  const [scopeLoading, setScopeLoading] = useState(false);
+  const [scopeError, setScopeError] = useState<string | null>(null);
+  const scopeCache = useRef(new Map<string, DavinciSeries>());
+  const scopeReqId = useRef(0);
+
+  // DrilldownPanel 每次 crumb 變動都會呼叫 → 必須穩定，否則 panel 內的 effect 會空轉
+  const handleScopeChange = useCallback((s: DavinciScope) => setScope(s), []);
+
+  const scopeDept = scope.dept;
+  const scopeSurgeon = scope.surgeon;
+  const isScoped = Boolean(scopeDept || scopeSurgeon);
+
+  // 切換指標/院區/月季/重新匯入 → 範圍與快取歸零
+  useEffect(() => {
+    scopeCache.current.clear();
+    setScope({});
+    setScopedSeries(null);
+    setScopeError(null);
+  }, [code, campus, mode, dataVersion]);
+
+  useEffect(() => {
+    if (!scopeDept && !scopeSurgeon) {
+      setScopedSeries(null);
+      setScopeError(null);
+      return;
+    }
+    const key = `${code}|${campus}|${mode}|${dataVersion}|${scopeDept ?? ''}|${scopeSurgeon ?? ''}`;
+    const hit = scopeCache.current.get(key);
+    if (hit) {
+      setScopedSeries(hit);
+      setScopeError(null);
+      return;
+    }
+    // 連點不同科別時回應可能亂序 → 只採用最後一次請求的結果
+    const reqId = ++scopeReqId.current;
+    setScopeLoading(true);
+    setScopeError(null);
+    fetchDavinciSeries(code, campus, mode, { dept: scopeDept, surgeon: scopeSurgeon })
+      .then(r => {
+        if (reqId !== scopeReqId.current) return;
+        scopeCache.current.set(key, r);
+        setScopedSeries(r);
+      })
+      .catch(e => {
+        if (reqId !== scopeReqId.current) return;
+        // 不退回全院區資料：標籤寫著科別卻顯示全院區數字是最糟的誤讀
+        setScopedSeries(null);
+        setScopeError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (reqId === scopeReqId.current) setScopeLoading(false);
+      });
+  }, [code, campus, mode, dataVersion, scopeDept, scopeSurgeon]);
+
   const isQuarterly = mode === 'quarterly';
 
   // ── QIP 型別轉接（元件直接複用） ──
@@ -100,6 +157,15 @@ export default function DavinciDetailPage() {
 
   const { meta, monthlyData, controlChart, anomalies, yearlySummaries } = adapted;
   const unit = unitLabel(series.unit);
+
+  // 只有「完整數據」吃篩選後的資料；monthlyData 維持全院區供其餘元件使用。
+  // scoped 時 controlChart 傳 null —— 它對 DataTable 的唯一用途是回推分子分母，
+  // 而回推來源必然是全院區的 n。
+  const tableMonthlyData = isScoped && scopedSeries
+    ? toMonthlyDataPoints(scopedSeries.points)
+    : monthlyData;
+  const tableControlChart = isScoped ? null : controlChart;
+  const scopeLabel = [scopeDept, scopeSurgeon].filter(Boolean).join(' › ');
 
   // 最新值（沿 QIP 邏輯：最新有值期別）
   const validPoints = series.points.filter(p => p.value !== null);
@@ -260,19 +326,51 @@ export default function DavinciDetailPage() {
             campus={campus}
             period={latest.period}
             periodLabel={latest.label}
+            onScopeChange={handleScopeChange}
           />
         </div>
       )}
 
       {/* 完整數據表（直接複用 QIP DataTable） */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-6 mb-6">
-        <h2 className="text-base font-bold text-gray-800 mb-4">完整數據</h2>
-        <DataTable
-          monthlyData={monthlyData}
-          unit={meta.unit}
-          isQuarterly={isQuarterly}
-          controlChart={controlChart}
-        />
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+          <h2 className="text-base font-bold text-gray-800 flex items-center gap-2">
+            完整數據
+            <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+              isScoped ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'
+            }`}>
+              {isScoped ? scopeLabel : '全院區'}
+            </span>
+            {scopeLoading && <span className="text-xs text-gray-400">載入中…</span>}
+          </h2>
+          {isScoped && (
+            <span className="text-xs text-gray-400">
+              以上方下鑽分析的麵包屑「全院區」可清除篩選
+            </span>
+          )}
+        </div>
+        {scopeError ? (
+          <p className="text-sm text-red-600 py-6 text-center">
+            此範圍載入失敗：{scopeError}
+          </p>
+        ) : isScoped && scopedSeries && scopedSeries.points.length === 0 ? (
+          <p className="text-sm text-gray-400 py-6 text-center">
+            {scopeLabel} 在所有期別皆無資料
+          </p>
+        ) : (
+          <DataTable
+            monthlyData={tableMonthlyData}
+            unit={meta.unit}
+            isQuarterly={isQuarterly}
+            controlChart={tableControlChart}
+          />
+        )}
+        {isScoped && (
+          <p className="text-xs text-gray-400 mt-3">
+            上方管制圖與年度平均值比較固定為全院區——科別／醫師層每月人次過少，
+            管制限會失去統計意義。
+          </p>
+        )}
       </div>
 
       {/* AI 深度分析（直接複用 QIP AIAnalysisPanel；僅送聚合統計，無個案資料） */}

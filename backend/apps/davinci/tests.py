@@ -7,8 +7,10 @@
 """
 from datetime import date
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase
 
+from . import views
+from .models import DavinciCase
 from .services import cleaner, masking
 from .services.aggregation import (
     aggregate_cases_by_period,
@@ -351,3 +353,67 @@ class AggregationTests(SimpleTestCase):
         self.assertEqual(dv02["median_value"], 150.0)
         self.assertEqual(dv02["n_excluded"], 1)
         self.assertEqual(dv02["denominator"], 2)
+
+
+class ScopeFilterTests(TestCase):
+    """下鑽範圍：分組鍵與篩選條件必須對稱 —— 看得到的 key 就必須鑽得進去。
+
+    回歸背景：分組鍵有 fallback（dept_name → dept_code → 佔位鍵），
+    篩選卻曾是 dept_name 精確比對，導致佔位鍵與只有 dept_code 的個案鑽不進去。
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        base = dict(campus="竹北", period=202601, op_time_min=100.0, blood_ml=10.0)
+        DavinciCase.objects.create(account="A1", dept_name="婦產科", dept_code="OBS",
+                                   surgeon="甲醫師", **base)
+        DavinciCase.objects.create(account="A2", dept_name="", dept_code="URO",
+                                   surgeon="乙醫師", **base)
+        DavinciCase.objects.create(account="A3", dept_name="", dept_code="",
+                                   surgeon="", **base)
+
+    def _all(self):
+        return DavinciCase.objects.all()
+
+    def test_every_group_key_filters_back_to_itself(self):
+        """對稱性的通則：任一個案，用它自己的分組鍵過濾都必須找得到它。"""
+        for case in self._all():
+            dkey = views._case_dept_key(case)
+            self.assertIn(
+                case, views._filter_cases_by_scope(self._all(), dkey, None),
+                f"科別鍵「{dkey}」篩不回自己（{case.account}）",
+            )
+            skey = views._case_surgeon_key(case)
+            self.assertIn(
+                case, views._filter_cases_by_scope(self._all(), None, skey),
+                f"醫師鍵「{skey}」篩不回自己（{case.account}）",
+            )
+
+    def test_dept_code_fallback_is_filterable(self):
+        qs = views._filter_cases_by_scope(self._all(), "URO", None)
+        self.assertEqual([c.account for c in qs], ["A2"])
+
+    def test_placeholder_dept_matches_only_fully_blank(self):
+        qs = views._filter_cases_by_scope(self._all(), views.UNKNOWN_DEPT, None)
+        self.assertEqual([c.account for c in qs], ["A3"])
+
+    def test_placeholder_surgeon_matches_only_blank(self):
+        qs = views._filter_cases_by_scope(self._all(), None, views.UNKNOWN_SURGEON)
+        self.assertEqual([c.account for c in qs], ["A3"])
+
+    def test_named_dept_does_not_leak_into_placeholder(self):
+        qs = views._filter_cases_by_scope(self._all(), "婦產科", None)
+        self.assertEqual([c.account for c in qs], ["A1"])
+
+    def test_scoped_denominators_sum_to_unscoped(self):
+        """使用者用來對帳的不變量：各科別分母加總 == 全院區分母。"""
+        def denom(cases):
+            groups = aggregate_cases_by_period(list(cases), mode="monthly")
+            row = next(r for r in groups[0]["indicators"] if r["code"] == "DV04")
+            return row["denominator"]
+
+        total = denom(self._all())
+        keys = {views._case_dept_key(c) for c in self._all()}
+        parts = sum(denom(views._filter_cases_by_scope(self._all(), k, None)) for k in keys)
+        self.assertEqual(parts, total)
+        self.assertEqual(total, 3)

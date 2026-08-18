@@ -42,7 +42,7 @@ from .services.aggregation import (
 from .services.cleaner import period_to_roc_label
 from .services.importer import parse_davinci_workbook
 from .services.persistence import persist_result
-from .services.spc import RATING_LABELS, compute_spc, rating_at
+from .services.spc import RATING_LABELS, RATING_NEUTRAL, SpcResult, compute_spc, rating_at
 
 CASES_PAGE_LIMIT = 500   # 個案明細單次回傳上限（回應附 truncated 供前端提示）
 
@@ -224,9 +224,14 @@ def indicator_values(request: HttpRequest) -> JsonResponse:
 
 
 def indicator_series(request: HttpRequest, code: str) -> JsonResponse:
-    """GET /api/davinci/indicators/{code}/series?campus=竹北[&mode=monthly|quarterly]
+    """GET /api/davinci/indicators/{code}/series?campus=竹北[&mode=][&dept=&surgeon=]
 
     跨期序列 + I-MR 管制界限 + WER 訊號 +（比率型）P Chart 變動限。即時計算，不入庫。
+
+    dept/surgeon 為選填，用於「完整數據」表格跟隨下鑽選取範圍。分組鍵語意與
+    /drilldown/ 共用 _filter_cases_by_scope，兩處數字保證對得起來。
+    注意：帶 scope 時 spc 亦以該子集計算，但科別層人次通常過少、管制限不具統計
+    意義，前端僅取 points，管制圖維持全院區。
     """
     code = code.upper()
     if code not in DAVINCI_INDICATORS:
@@ -238,11 +243,23 @@ def indicator_series(request: HttpRequest, code: str) -> JsonResponse:
     if err:
         return err
 
+    dept = request.GET.get("dept") or None
+    surgeon = request.GET.get("surgeon") or None
+
     meta_row = DAVINCI_INDICATORS[code]
-    cases = list(DavinciCase.objects.filter(campus=campus))
-    groups = aggregate_cases_by_period(cases, mode=mode)
+    qs = _filter_cases_by_scope(DavinciCase.objects.filter(campus=campus), dept, surgeon)
+    groups = aggregate_cases_by_period(list(qs), mode=mode)
     series = build_series(groups, code)
-    spc = compute_spc(series, meta_row["kind"], P_CHART_MIN_N)
+    if dept or surgeon:
+        # 範圍篩選後月人次通常個位數，管制限不具統計意義 →
+        # 契約層面就不吐出，避免任何呼叫端誤用（前端管制圖維持全院區）。
+        spc = SpcResult(
+            has_chart=False, insufficient=True, baseline_warning=False,
+            baseline_n=len(series),
+            rating=RATING_NEUTRAL, rating_label=RATING_LABELS[RATING_NEUTRAL],
+        )
+    else:
+        spc = compute_spc(series, meta_row["kind"], P_CHART_MIN_N)
 
     return JsonResponse({
         "code": code,
@@ -251,6 +268,8 @@ def indicator_series(request: HttpRequest, code: str) -> JsonResponse:
         "unit": meta_row["unit"],
         "campus": campus,
         "mode": mode,
+        "dept": dept,
+        "surgeon": surgeon,
         "points": [
             {
                 "period": p.period, "label": p.label, "value": p.value,
