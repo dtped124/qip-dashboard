@@ -22,8 +22,8 @@ interface Props {
   kind: 'rate' | 'continuous';
   unit: string;
   campus: DavinciCampus;
-  period: DavinciPeriodKey;
-  periodLabel: string;
+  /** 可下鑽的期別（僅有資料者），由舊到新；預設選最新一期。 */
+  periods: { period: DavinciPeriodKey; label: string }[];
   /** 選取範圍變動時通知父層（供「完整數據」跟隨）。必須是穩定的 callback。 */
   onScopeChange?: (scope: { dept?: string; surgeon?: string }) => void;
 }
@@ -35,7 +35,16 @@ interface Crumb {
   order?: string;
 }
 
-export function DrilldownPanel({ code, kind, unit, campus, period, periodLabel, onScopeChange }: Props) {
+export function DrilldownPanel({ code, kind, unit, campus, periods, onScopeChange }: Props) {
+  const [picked, setPicked] = useState<DavinciPeriodKey | null>(null);
+  // 切換指標/院區/月季後，舊的選擇可能已不在清單裡 → 退回最新一期。
+  // 用「驗證後退回」而非 reset effect，避免多一次 render 與載入。
+  const latestPeriod = periods[periods.length - 1]?.period;
+  const period = periods.some(p => String(p.period) === String(picked))
+    ? (picked as DavinciPeriodKey)
+    : latestPeriod;
+  const periodLabel = periods.find(p => String(p.period) === String(period))?.label ?? '';
+
   const [crumb, setCrumb] = useState<Crumb>({ level: 'dept' });
   const [rows, setRows] = useState<DrilldownRow[]>([]);
   const [cases, setCases] = useState<DavinciCaseRow[]>([]);
@@ -105,7 +114,23 @@ export function DrilldownPanel({ code, kind, unit, campus, period, periodLabel, 
     <div className="bg-white rounded-lg border border-gray-200 p-4">
       <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
         <h3 className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
-          <Users size={15} /> 下鑽分析 — {periodLabel}
+          <Users size={15} /> 下鑽分析 —
+          {periods.length > 1 ? (
+            <select
+              value={String(period)}
+              onChange={e => setPicked(e.target.value)}
+              className="ml-0.5 border border-gray-300 rounded px-1.5 py-0.5 text-sm
+                         text-gray-800 bg-white hover:border-gray-400 focus:outline-none
+                         focus:ring-1 focus:ring-blue-400"
+              aria-label="選擇下鑽期別"
+            >
+              {[...periods].reverse().map(p => (
+                <option key={String(p.period)} value={String(p.period)}>{p.label}</option>
+              ))}
+            </select>
+          ) : (
+            <span>{periodLabel}</span>
+          )}
         </h3>
         {/* 麵包屑 */}
         <nav className="flex items-center gap-1 text-xs text-gray-500 flex-wrap">

@@ -317,15 +317,14 @@ export default function DavinciDetailPage() {
       </div>
 
       {/* 下鑽分析（達文西特有：科別 → 醫師 → 術式 → 個案明細） */}
-      {latest && (
+      {validPoints.length > 0 && (
         <div className="mb-6">
           <DrilldownPanel
             code={code}
             kind={series.kind}
             unit={series.unit}
             campus={campus}
-            period={latest.period}
-            periodLabel={latest.label}
+            periods={validPoints.map(p => ({ period: p.period, label: p.label }))}
             onScopeChange={handleScopeChange}
           />
         </div>
