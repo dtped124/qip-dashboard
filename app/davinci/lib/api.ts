@@ -8,6 +8,7 @@ import type {
   DavinciMode,
   DavinciPeriodGroup,
   DavinciPeriodKey,
+  DavinciScope,
   DavinciSeries,
   DavinciSpcSummary,
   DrilldownBy,
@@ -41,13 +42,21 @@ export async function fetchDavinciIndicators(
   return { groups: body.data as DavinciPeriodGroup[], spc: body.spc ?? {} };
 }
 
+/**
+ * 跨期序列。scope 為選填，用於「完整數據」跟隨下鑽選取的科別／醫師。
+ * 帶 scope 時後端不回傳管制限（科別層人次過少），呼叫端只該取 points。
+ */
 export async function fetchDavinciSeries(
   code: string,
   campus: DavinciCampus,
   mode: DavinciMode = 'monthly',
+  scope?: DavinciScope,
 ): Promise<DavinciSeries> {
+  const q = new URLSearchParams({ campus, mode });
+  if (scope?.dept) q.set('dept', scope.dept);
+  if (scope?.surgeon) q.set('surgeon', scope.surgeon);
   const res = await fetch(
-    `${API_BASE}/api/davinci/indicators/${code}/series/?campus=${encodeURIComponent(campus)}&mode=${mode}`,
+    `${API_BASE}/api/davinci/indicators/${encodeURIComponent(code)}/series/?${q}`,
   );
   return (await jsonOrThrow(res)) as DavinciSeries;
 }

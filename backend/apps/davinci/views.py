@@ -19,6 +19,7 @@ import json
 from urllib.parse import quote
 
 from django.core.files.base import ContentFile
+from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from openpyxl import Workbook
@@ -41,7 +42,7 @@ from .services.aggregation import (
 from .services.cleaner import period_to_roc_label
 from .services.importer import parse_davinci_workbook
 from .services.persistence import persist_result
-from .services.spc import RATING_LABELS, compute_spc, rating_at
+from .services.spc import RATING_LABELS, RATING_NEUTRAL, SpcResult, compute_spc, rating_at
 
 CASES_PAGE_LIMIT = 500   # 個案明細單次回傳上限（回應附 truncated 供前端提示）
 
@@ -223,9 +224,14 @@ def indicator_values(request: HttpRequest) -> JsonResponse:
 
 
 def indicator_series(request: HttpRequest, code: str) -> JsonResponse:
-    """GET /api/davinci/indicators/{code}/series?campus=竹北[&mode=monthly|quarterly]
+    """GET /api/davinci/indicators/{code}/series?campus=竹北[&mode=][&dept=&surgeon=]
 
     跨期序列 + I-MR 管制界限 + WER 訊號 +（比率型）P Chart 變動限。即時計算，不入庫。
+
+    dept/surgeon 為選填，用於「完整數據」表格跟隨下鑽選取範圍。分組鍵語意與
+    /drilldown/ 共用 _filter_cases_by_scope，兩處數字保證對得起來。
+    注意：帶 scope 時 spc 亦以該子集計算，但科別層人次通常過少、管制限不具統計
+    意義，前端僅取 points，管制圖維持全院區。
     """
     code = code.upper()
     if code not in DAVINCI_INDICATORS:
@@ -237,11 +243,23 @@ def indicator_series(request: HttpRequest, code: str) -> JsonResponse:
     if err:
         return err
 
+    dept = request.GET.get("dept") or None
+    surgeon = request.GET.get("surgeon") or None
+
     meta_row = DAVINCI_INDICATORS[code]
-    cases = list(DavinciCase.objects.filter(campus=campus))
-    groups = aggregate_cases_by_period(cases, mode=mode)
+    qs = _filter_cases_by_scope(DavinciCase.objects.filter(campus=campus), dept, surgeon)
+    groups = aggregate_cases_by_period(list(qs), mode=mode)
     series = build_series(groups, code)
-    spc = compute_spc(series, meta_row["kind"], P_CHART_MIN_N)
+    if dept or surgeon:
+        # 範圍篩選後月人次通常個位數，管制限不具統計意義 →
+        # 契約層面就不吐出，避免任何呼叫端誤用（前端管制圖維持全院區）。
+        spc = SpcResult(
+            has_chart=False, insufficient=True, baseline_warning=False,
+            baseline_n=len(series),
+            rating=RATING_NEUTRAL, rating_label=RATING_LABELS[RATING_NEUTRAL],
+        )
+    else:
+        spc = compute_spc(series, meta_row["kind"], P_CHART_MIN_N)
 
     return JsonResponse({
         "code": code,
@@ -250,6 +268,8 @@ def indicator_series(request: HttpRequest, code: str) -> JsonResponse:
         "unit": meta_row["unit"],
         "campus": campus,
         "mode": mode,
+        "dept": dept,
+        "surgeon": surgeon,
         "points": [
             {
                 "period": p.period, "label": p.label, "value": p.value,
@@ -287,6 +307,37 @@ def indicator_series(request: HttpRequest, code: str) -> JsonResponse:
 # ── 下鑽 ──
 
 UNKNOWN_ORDER = "（未知術式）"
+UNKNOWN_DEPT = "（未填科別）"
+UNKNOWN_SURGEON = "（未填醫師）"
+
+
+def _case_dept_key(case: DavinciCase) -> str:
+    """個案的科別分組鍵（drilldown / series / cases 共用同一定義）。"""
+    return case.dept_name or case.dept_code or UNKNOWN_DEPT
+
+
+def _case_surgeon_key(case: DavinciCase) -> str:
+    """個案的醫師分組鍵。"""
+    return case.surgeon or UNKNOWN_SURGEON
+
+
+def _filter_cases_by_scope(qs, dept: str | None, surgeon: str | None):
+    """依科別／醫師縮小 queryset。
+
+    分組鍵有 fallback（dept_name → dept_code → 佔位鍵），過濾必須對稱處理，
+    否則點進佔位鍵或只有 dept_code 的個案會查無資料。
+    """
+    if dept:
+        if dept == UNKNOWN_DEPT:
+            qs = qs.filter(dept_name="", dept_code="")
+        else:
+            # 與 _case_dept_key 對稱：dept_name 命中，或 dept_name 空白時比對 dept_code
+            qs = qs.filter(
+                Q(dept_name=dept) | Q(dept_name="", dept_code=dept)
+            )
+    if surgeon:
+        qs = qs.filter(surgeon="" if surgeon == UNKNOWN_SURGEON else surgeon)
+    return qs
 
 
 def _filter_cases_by_period(qs, period_raw: str):
@@ -331,19 +382,16 @@ def drilldown(request: HttpRequest) -> JsonResponse:
     qs, err = _filter_cases_by_period(qs, period_raw)
     if err:
         return err
-    if request.GET.get("dept"):
-        qs = qs.filter(dept_name=request.GET["dept"])
-    if request.GET.get("surgeon"):
-        qs = qs.filter(surgeon=request.GET["surgeon"])
+    qs = _filter_cases_by_scope(qs, request.GET.get("dept"), request.GET.get("surgeon"))
 
     groups: dict[str, list] = {}
     for c in qs:
         if by == "order":
             keys = _case_order_names(c)
         elif by == "surgeon":
-            keys = [c.surgeon or "（未填醫師）"]
+            keys = [_case_surgeon_key(c)]
         else:
-            keys = [c.dept_name or c.dept_code or "（未填科別）"]
+            keys = [_case_dept_key(c)]
         for k in keys:
             groups.setdefault(k, []).append(c)
 
@@ -380,10 +428,7 @@ def case_list(request: HttpRequest) -> JsonResponse:
     qs, err = _filter_cases_by_period(qs, period_raw)
     if err:
         return err
-    if request.GET.get("dept"):
-        qs = qs.filter(dept_name=request.GET["dept"])
-    if request.GET.get("surgeon"):
-        qs = qs.filter(surgeon=request.GET["surgeon"])
+    qs = _filter_cases_by_scope(qs, request.GET.get("dept"), request.GET.get("surgeon"))
 
     order_filter = request.GET.get("order")
     code = (request.GET.get("code") or "").upper()

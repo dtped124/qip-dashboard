@@ -99,6 +99,12 @@ export interface DavinciSeries {
   };
 }
 
+/** 下鑽選取範圍。術式層不參與篩選（一台刀可計入多個術式，分母會膨脹）。 */
+export interface DavinciScope {
+  dept?: string;
+  surgeon?: string;
+}
+
 export type DrilldownBy = 'dept' | 'surgeon' | 'order';
 
 export interface DrilldownRow {
