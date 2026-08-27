@@ -96,6 +96,53 @@ CAMPUS_ALIASES: dict[str, str] = {
 
 DAVINCI_CAMPUSES = ["竹北", "新竹"]  # 竹東無達文西（前端反白停用）
 
+# ── 醫令碼分類表（機械手臂輔助手術認證術式） ──
+# 來源：健保署「機械手臂輔助手術同意認證學會名單暨器官系統認證術式醫令範圍列表」
+# （114/7/18 更新），歸類定案 2026-08-27：
+# - 80025B 同時列於婦科(EI)/泌尿科(EF)認證範圍 → 歸婦科
+# - priority = 分類表件數；個案無科別且多醫令跨器官系統時，取 priority 最大者
+# 用途：竹北 VPN 申報資料無科別/術式名稱 → 顯示層推導（不回寫資料庫）
+ORDER_CODE_REGISTRY: dict[str, dict] = {
+    # 婦科
+    "80425C": {"name": "腹腔鏡子宮肌瘤切除術", "organ": "婦科", "priority": 46},
+    "80430B": {"name": "腹腔鏡次全子宮切除術", "organ": "婦科", "priority": 45},
+    "80025B": {"name": "腹腔鏡陰道懸吊術", "organ": "婦科", "priority": 26},
+    "80424B": {"name": "婦癌分期手術", "organ": "婦科", "priority": 12},
+    "80416B": {"name": "腹腔鏡全子宮切除術", "organ": "婦科", "priority": 6},
+    "80031C": {"name": "腹腔鏡骨盆腔子宮內膜異位症電燒及切除－重度", "organ": "婦科", "priority": 2},
+    # 泌尿科
+    "79417B": {"name": "腹腔鏡根除性攝護腺切除術併雙側骨盆腔淋巴切除術", "organ": "泌尿科", "priority": 77},
+    "76031B": {"name": "腹腔鏡部分腎臟切除術", "organ": "泌尿科", "priority": 29},
+    "76037B": {"name": "腹腔鏡根治性腎切除術", "organ": "泌尿科", "priority": 8},
+    "76030B": {"name": "腹腔鏡腎臟輸尿管切除術", "organ": "泌尿科", "priority": 5},
+    "78051B": {"name": "腹腔鏡膀胱全切除術及骨盆腔淋巴切除術併雙側輸尿管迴腸經皮分流術", "organ": "泌尿科", "priority": 1},
+    # 大腸直腸外科
+    "74221B": {"name": "腹腔鏡低前位直腸切除術", "organ": "大腸直腸外科", "priority": 73},
+    "73045B": {"name": "腹腔鏡右側大腸切除術加吻合術", "organ": "大腸直腸外科", "priority": 16},
+    "74224B": {"name": "腹腔鏡腹部會陰聯合切除術", "organ": "大腸直腸外科", "priority": 3},
+    "73057B": {"name": "腹腔鏡左半結腸切除術", "organ": "大腸直腸外科", "priority": 2},
+    "73048B": {"name": "腹腔鏡乙狀結腸切除術加吻合術－惡性", "organ": "大腸直腸外科", "priority": 1},
+    # 胸腔／心臟外科
+    "67050B": {"name": "胸腔鏡肺葉切除術", "organ": "胸腔／心臟外科", "priority": 33},
+    "67053B": {"name": "胸腔鏡肺分葉切除術", "organ": "胸腔／心臟外科", "priority": 16},
+    "71224B": {"name": "胸（腹）腔鏡食道切除術", "organ": "胸腔／心臟外科", "priority": 8},
+    "70416B": {"name": "胸腔鏡縱膈腔腫瘤切除術（＜5cm）", "organ": "胸腔／心臟外科", "priority": 8},
+    "70417B": {"name": "胸腔鏡縱膈腔腫瘤切除術（≧5cm）", "organ": "胸腔／心臟外科", "priority": 7},
+    "71227B": {"name": "胸（腹）腔鏡食道胃管重建術", "organ": "胸腔／心臟外科", "priority": 2},
+    # 消化外科
+    "75215B": {"name": "腹腔鏡膽囊切除術", "organ": "消化外科", "priority": 3},
+    "75619C": {"name": "腹腔鏡鼠蹊疝氣修補術－無腸切除", "organ": "消化外科", "priority": 3},
+    "72059B": {"name": "腹腔鏡次全胃切除術併淋巴清除及腸胃重建", "organ": "消化外科", "priority": 1},
+}
+
+
+def lookup_order_code(code: str) -> dict | None:
+    """查分類表：先精確比對，再取前 6 碼（院內碼常帶尾綴，如 74221B0G）。"""
+    if not code:
+        return None
+    return ORDER_CODE_REGISTRY.get(code) or ORDER_CODE_REGISTRY.get(code[:6])
+
+
 # ── SPC 參數 ──
 
 P_CHART_MIN_N = 20  # 當月人次達門檻才補畫 P Chart（Phase 5 移入可設定表）

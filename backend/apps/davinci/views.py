@@ -19,7 +19,6 @@ import json
 from urllib.parse import quote
 
 from django.core.files.base import ContentFile
-from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from openpyxl import Workbook
@@ -31,6 +30,7 @@ from .constants import (
     DAVINCI_INDICATORS,
     P_CHART_MIN_N,
     SEVERE_COMP_CODES,
+    lookup_order_code,
 )
 from .models import DavinciCase, DavinciImportLog, ImportStatus
 from .services.aggregation import (
@@ -312,8 +312,19 @@ UNKNOWN_SURGEON = "（未填醫師）"
 
 
 def _case_dept_key(case: DavinciCase) -> str:
-    """個案的科別分組鍵（drilldown / series / cases 共用同一定義）。"""
-    return case.dept_name or case.dept_code or UNKNOWN_DEPT
+    """個案的科別分組鍵（drilldown / series / cases 共用同一定義）。
+
+    無科別時以醫令碼分類表推導器官系統別（顯示層推導，不回寫資料）；
+    多醫令跨器官系統時取 priority（分類表件數）最大者。
+    """
+    if case.dept_name or case.dept_code:
+        return case.dept_name or case.dept_code
+    best = None
+    for o in case.order_codes:
+        row = lookup_order_code(o.get("code") or "")
+        if row and (best is None or row["priority"] > best["priority"]):
+            best = row
+    return best["organ"] if best else UNKNOWN_DEPT
 
 
 def _case_surgeon_key(case: DavinciCase) -> str:
@@ -321,23 +332,21 @@ def _case_surgeon_key(case: DavinciCase) -> str:
     return case.surgeon or UNKNOWN_SURGEON
 
 
-def _filter_cases_by_scope(qs, dept: str | None, surgeon: str | None):
-    """依科別／醫師縮小 queryset。
+def _filter_cases_by_scope(
+    cases, dept: str | None, surgeon: str | None, order: str | None = None,
+) -> list[DavinciCase]:
+    """依科別／醫師／術式縮小個案集合，回傳 list。
 
-    分組鍵有 fallback（dept_name → dept_code → 佔位鍵），過濾必須對稱處理，
-    否則點進佔位鍵或只有 dept_code 的個案會查無資料。
+    篩選一律以分組鍵函式比對（Python 層）：科別鍵可能由醫令碼分類表推導而來，
+    ORM 無法表達；用同一個函式的輸出比對，對稱性由建構保證——
+    分組時看得到的鍵，回篩必然找得到。
     """
-    if dept:
-        if dept == UNKNOWN_DEPT:
-            qs = qs.filter(dept_name="", dept_code="")
-        else:
-            # 與 _case_dept_key 對稱：dept_name 命中，或 dept_name 空白時比對 dept_code
-            qs = qs.filter(
-                Q(dept_name=dept) | Q(dept_name="", dept_code=dept)
-            )
-    if surgeon:
-        qs = qs.filter(surgeon="" if surgeon == UNKNOWN_SURGEON else surgeon)
-    return qs
+    return [
+        c for c in cases
+        if (not dept or _case_dept_key(c) == dept)
+        and (not surgeon or _case_surgeon_key(c) == surgeon)
+        and (not order or order in _case_order_names(c))
+    ]
 
 
 def _filter_cases_by_period(qs, period_raw: str):
@@ -354,14 +363,22 @@ def _filter_cases_by_period(qs, period_raw: str):
 
 
 def _case_order_names(case: DavinciCase) -> list[str]:
-    """個案的術式名稱清單；無醫令時回佔位鍵（與 drilldown 分組鍵一致）。"""
-    names = [o.get("name") or o.get("code") or UNKNOWN_ORDER for o in case.order_codes]
+    """個案的術式名稱清單；無醫令時回佔位鍵（與 drilldown 分組鍵一致）。
+
+    名稱空白時以醫令碼分類表補中文術式名（竹北 VPN 申報檔只有裸代碼）。
+    """
+    names = []
+    for o in case.order_codes:
+        row = lookup_order_code(o.get("code") or "")
+        names.append(
+            o.get("name") or (row["name"] if row else "") or o.get("code") or UNKNOWN_ORDER
+        )
     # 同帳號多列可能重複同一術式 → 去重，避免下鑽計數膨脹
     return list(dict.fromkeys(names)) or [UNKNOWN_ORDER]
 
 
 def drilldown(request: HttpRequest) -> JsonResponse:
-    """GET /api/davinci/drilldown?code=&campus=&period=&by=dept|surgeon|order[&dept=&surgeon=]
+    """GET /api/davinci/drilldown?code=&campus=&period=&by=dept|surgeon|order[&dept=&surgeon=&order=]
 
     下鑽分組聚合。每層皆回分子/分母（比率型）或 平均+n（連續型）。
     註：一台手術可含多個不同術式 → by=order 時同一人次會計入其每個術式
@@ -382,10 +399,12 @@ def drilldown(request: HttpRequest) -> JsonResponse:
     qs, err = _filter_cases_by_period(qs, period_raw)
     if err:
         return err
-    qs = _filter_cases_by_scope(qs, request.GET.get("dept"), request.GET.get("surgeon"))
+    cases = _filter_cases_by_scope(
+        qs, request.GET.get("dept"), request.GET.get("surgeon"), request.GET.get("order"),
+    )
 
     groups: dict[str, list] = {}
-    for c in qs:
+    for c in cases:
         if by == "order":
             keys = _case_order_names(c)
         elif by == "surgeon":
@@ -428,19 +447,19 @@ def case_list(request: HttpRequest) -> JsonResponse:
     qs, err = _filter_cases_by_period(qs, period_raw)
     if err:
         return err
-    qs = _filter_cases_by_scope(qs, request.GET.get("dept"), request.GET.get("surgeon"))
-
     order_filter = request.GET.get("order")
+    cases = _filter_cases_by_scope(
+        qs, request.GET.get("dept"), request.GET.get("surgeon"), order_filter,
+    )
+
     code = (request.GET.get("code") or "").upper()
     fieldname = DAVINCI_INDICATORS[code]["case_field"] if code in DAVINCI_INDICATORS else None
     is_rate = code in DAVINCI_INDICATORS and DAVINCI_INDICATORS[code]["kind"] == "rate"
 
     data = []
-    for c in qs.order_by("period", "account"):
+    for c in sorted(cases, key=lambda c: (c.period, c.account)):
         # 佔位鍵（（未知術式））與 drilldown 分組鍵一致，點擊該列才有結果
         order_names = _case_order_names(c)
-        if order_filter and order_filter not in order_names:
-            continue
         data.append({
             "period": c.period,
             "period_label": period_to_roc_label(c.period),
