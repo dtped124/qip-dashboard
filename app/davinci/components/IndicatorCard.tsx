@@ -3,7 +3,7 @@
 /**
  * 達文西指標卡 — 版型 1:1 鏡射 QIP 的 components/dashboard/IndicatorCard：
  * 燈號徽章 + mono 代碼 + 異常數紅圈 + 面向色條 / 名稱 / 大字值 + Sparkline /
- * 觸發規則 tags / 底部標竿 + 趨勢箭頭 / 前期均值。
+ * 觸發規則 tags / 底部標竿 + 趨勢箭頭 / 前一年平均。
  * 直接複用 QIP 的 StatusBadge / TrendArrow / Sparkline（僅 import，不修改）。
  *
  * 達文西差異（依定案）：比率型大字顯示 分子/分母（0 事件顯示 0/15 而非 0%），
@@ -20,6 +20,8 @@ import type {
   DavinciPeriodKey,
 } from '../lib/types';
 import { DAVINCI_COLOR, WER_RULE_LABELS, periodToYearMonth, unitLabel } from '../lib/ui';
+
+import { toYearlySummaries } from '../lib/qipAdapter';
 
 interface Props {
   meta: DavinciIndicatorMeta;
@@ -59,6 +61,21 @@ export function IndicatorCard({ meta, groups, selectedPeriod }: Props) {
   const unfavorableCount = current?.row?.signals.length ?? 0;
 
   const rating = current?.row?.rating ?? 'neutral';
+
+  // 前一年平均（比照 QIP 卡片；重用 toYearlySummaries 的分母加權年均）
+  const yearly = toYearlySummaries(
+    series
+      .filter(s => s.row)
+      .map(s => ({
+        period: s.period,
+        label: s.label,
+        value: s.row!.value,
+        numerator: s.row!.numerator,
+        denominator: s.row!.denominator,
+        rating: 'neutral' as const,
+      })),
+  );
+  const prevYearAvg = yearly.length > 1 ? yearly[yearly.length - 2] : null;
 
   return (
     <Link
@@ -136,13 +153,10 @@ export function IndicatorCard({ meta, groups, selectedPeriod }: Props) {
         <TrendArrow trend={trend} isReverse={false} />
       </div>
 
-      {/* 前期值 */}
-      {prev?.row && prev.row.value != null && (
+      {/* 前一年平均（比照 QIP 卡片） */}
+      {prevYearAvg && prevYearAvg.average !== null && (
         <div className="text-xs text-gray-400 mt-1">
-          {prev.label}:{' '}
-          {meta.kind === 'rate'
-            ? `${prev.row.numerator}/${prev.row.denominator}（${prev.row.value}%）`
-            : `${prev.row.value} ${unit}`}
+          {prevYearAvg.year}年均: {prevYearAvg.average}{meta.kind === 'rate' ? '%' : ` ${unit}`}
         </div>
       )}
     </Link>
