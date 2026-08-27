@@ -35,6 +35,18 @@ interface Crumb {
   order?: string;
 }
 
+type Dim = 'dept' | 'surgeon' | 'order';
+
+/** 起始維度 → 下鑽序列（後續順序固定，個案明細恆為最後一層）。
+ * 術式不放中段以後的原因見 scope 註解：一台刀可含多個術式。 */
+const DRILL_SEQ: Record<Dim, Dim[]> = {
+  dept: ['dept', 'surgeon', 'order'],
+  surgeon: ['surgeon', 'order'],
+  order: ['order', 'surgeon'],
+};
+
+const DIM_LABEL: Record<Dim, string> = { dept: '科別', surgeon: '醫師', order: '術式' };
+
 export function DrilldownPanel({ code, kind, unit, campus, periods, onScopeChange }: Props) {
   const [picked, setPicked] = useState<DavinciPeriodKey | null>(null);
   // 切換指標/院區/月季後，舊的選擇可能已不在清單裡 → 退回最新一期。
@@ -44,6 +56,9 @@ export function DrilldownPanel({ code, kind, unit, campus, periods, onScopeChang
     ? (picked as DavinciPeriodKey)
     : latestPeriod;
   const periodLabel = periods.find(p => String(p.period) === String(period))?.label ?? '';
+
+  const [startDim, setStartDim] = useState<Dim>('dept');
+  const seq = DRILL_SEQ[startDim];
 
   const [crumb, setCrumb] = useState<Crumb>({ level: 'dept' });
   const [rows, setRows] = useState<DrilldownRow[]>([]);
@@ -70,7 +85,7 @@ export function DrilldownPanel({ code, kind, unit, campus, periods, onScopeChang
       } else {
         setRows(await fetchDrilldown({
           code, campus, period, by: c.level,
-          dept: c.dept, surgeon: c.surgeon,
+          dept: c.dept, surgeon: c.surgeon, order: c.order,
         }));
       }
     } catch (e) {
@@ -83,8 +98,8 @@ export function DrilldownPanel({ code, kind, unit, campus, periods, onScopeChang
   // 單一資料流：導覽只 setCrumb，fetch 統一由 crumb 變化驅動 —
   // 避免「setCrumb 沒配對 load()」造成麵包屑與表格脫鉤
   useEffect(() => {
-    setCrumb({ level: 'dept' });
-  }, [code, campus, period]);
+    setCrumb({ level: startDim });
+  }, [code, campus, period, startDim]);
 
   useEffect(() => {
     load(crumb);
@@ -101,9 +116,12 @@ export function DrilldownPanel({ code, kind, unit, campus, periods, onScopeChang
   const go = (c: Crumb) => setCrumb(c);
 
   const drill = (key: string) => {
-    if (crumb.level === 'dept') go({ level: 'surgeon', dept: key });
-    else if (crumb.level === 'surgeon') go({ level: 'order', dept: crumb.dept, surgeon: key });
-    else if (crumb.level === 'order') go({ level: 'cases', dept: crumb.dept, surgeon: crumb.surgeon, order: key });
+    const idx = seq.indexOf(crumb.level as Dim);
+    if (idx === -1) return; // cases 層不再下鑽
+    const next: Crumb = { level: idx + 1 < seq.length ? seq[idx + 1] : 'cases' };
+    for (let i = 0; i < idx; i++) next[seq[i]] = crumb[seq[i]];
+    next[seq[idx]] = key;
+    go(next);
   };
 
   const LEVEL_LABEL: Record<Crumb['level'], string> = {
@@ -131,37 +149,49 @@ export function DrilldownPanel({ code, kind, unit, campus, periods, onScopeChang
           ) : (
             <span>{periodLabel}</span>
           )}
+          <span className="ml-2 flex items-center gap-1 text-xs font-normal">
+            <span className="text-gray-400">先看</span>
+            {(Object.keys(DRILL_SEQ) as Dim[]).map(d => (
+              <button
+                key={d}
+                onClick={() => setStartDim(d)}
+                className={`px-1.5 py-0.5 rounded border ${
+                  startDim === d
+                    ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
+                    : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                }`}
+              >
+                {DIM_LABEL[d]}
+              </button>
+            ))}
+          </span>
         </h3>
         {/* 麵包屑 */}
         <nav className="flex items-center gap-1 text-xs text-gray-500 flex-wrap">
-          <button onClick={() => go({ level: 'dept' })}
-                  className={crumb.level === 'dept' ? 'font-medium text-gray-800' : 'text-blue-600 hover:underline'}>
+          <button onClick={() => go({ level: startDim })}
+                  className={crumb.level === startDim ? 'font-medium text-gray-800' : 'text-blue-600 hover:underline'}>
             全院區
           </button>
-          {crumb.dept && (
-            <>
-              <ChevronRight size={12} />
-              <button onClick={() => go({ level: 'surgeon', dept: crumb.dept })}
-                      className={crumb.level === 'surgeon' ? 'font-medium text-gray-800' : 'text-blue-600 hover:underline'}>
-                {crumb.dept}
-              </button>
-            </>
-          )}
-          {crumb.surgeon && (
-            <>
-              <ChevronRight size={12} />
-              <button onClick={() => go({ level: 'order', dept: crumb.dept, surgeon: crumb.surgeon })}
-                      className={crumb.level === 'order' ? 'font-medium text-gray-800' : 'text-blue-600 hover:underline'}>
-                {crumb.surgeon}
-              </button>
-            </>
-          )}
-          {crumb.order && (
-            <>
-              <ChevronRight size={12} />
-              <span className="font-medium text-gray-800">{crumb.order}</span>
-            </>
-          )}
+          {seq.map((dim, i) => {
+            const value = crumb[dim];
+            if (!value) return null;
+            const target: Crumb['level'] = i + 1 < seq.length ? seq[i + 1] : 'cases';
+            return (
+              <span key={dim} className="flex items-center gap-1">
+                <ChevronRight size={12} />
+                <button
+                  onClick={() => {
+                    const next: Crumb = { level: target };
+                    for (let j = 0; j <= i; j++) next[seq[j]] = crumb[seq[j]];
+                    go(next);
+                  }}
+                  className={crumb.level === target ? 'font-medium text-gray-800' : 'text-blue-600 hover:underline'}
+                >
+                  {value}
+                </button>
+              </span>
+            );
+          })}
           {crumb.level !== 'cases' && (
             <button
               onClick={() => go({ level: 'cases', dept: crumb.dept, surgeon: crumb.surgeon, order: crumb.order })}

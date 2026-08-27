@@ -417,3 +417,78 @@ class ScopeFilterTests(TestCase):
         parts = sum(denom(views._filter_cases_by_scope(self._all(), k, None)) for k in keys)
         self.assertEqual(parts, total)
         self.assertEqual(total, 3)
+
+
+class OrderCodeRegistryTests(TestCase):
+    """醫令碼分類表推導：無科別個案以器官系統別分組、術式裸碼補中文名。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        base = dict(campus="竹北", period=202601, op_time_min=100.0, blood_ml=10.0)
+        # 竹北 VPN 形態：無科別/醫師，僅裸醫令碼
+        DavinciCase.objects.create(
+            account="V1", dept_name="", dept_code="", surgeon="",
+            order_codes=[{"code": "80425C", "name": ""}], **base)
+        # 跨器官系統多醫令（實例 202601/100753）：priority 79417B(77) > 75619C(3)
+        DavinciCase.objects.create(
+            account="V2", dept_name="", dept_code="", surgeon="",
+            order_codes=[{"code": "75619C", "name": ""}, {"code": "79417B", "name": ""}], **base)
+        # 分類表查無的代碼 → 仍為（未填科別）
+        DavinciCase.objects.create(
+            account="V3", dept_name="", dept_code="", surgeon="",
+            order_codes=[{"code": "99999X", "name": ""}], **base)
+        # 新竹形態：有真實科別與名稱（帶院內尾綴碼）→ 推導不得介入
+        DavinciCase.objects.create(
+            account="H1", dept_name="婦產科", dept_code="OBS", surgeon="某醫師",
+            order_codes=[{"code": "74221B0G", "name": "腹腔鏡低前位直腸切除術"}], **base)
+
+    def _all(self):
+        return DavinciCase.objects.all()
+
+    def test_derives_organ_system_from_order_code(self):
+        c = DavinciCase.objects.get(account="V1")
+        self.assertEqual(views._case_dept_key(c), "婦科")
+
+    def test_cross_organ_case_uses_priority(self):
+        c = DavinciCase.objects.get(account="V2")
+        self.assertEqual(views._case_dept_key(c), "泌尿科")
+
+    def test_unknown_code_stays_placeholder(self):
+        c = DavinciCase.objects.get(account="V3")
+        self.assertEqual(views._case_dept_key(c), views.UNKNOWN_DEPT)
+
+    def test_real_dept_wins_over_derivation(self):
+        c = DavinciCase.objects.get(account="H1")
+        self.assertEqual(views._case_dept_key(c), "婦產科")
+
+    def test_derived_key_filters_back_to_itself(self):
+        """對稱性延伸到推導鍵：分組看得到的科別，回篩必須找得到。"""
+        for case in self._all():
+            key = views._case_dept_key(case)
+            self.assertIn(
+                case, views._filter_cases_by_scope(self._all(), key, None),
+                f"推導鍵「{key}」篩不回自己（{case.account}）",
+            )
+
+    def test_order_names_enriched_from_registry(self):
+        c = DavinciCase.objects.get(account="V1")
+        self.assertEqual(views._case_order_names(c), ["腹腔鏡子宮肌瘤切除術"])
+
+    def test_order_filter_matches_enriched_name(self):
+        got = views._filter_cases_by_scope(self._all(), None, None, "腹腔鏡子宮肌瘤切除術")
+        self.assertEqual([c.account for c in got], ["V1"])
+
+    def test_derived_dept_denominators_sum_to_total(self):
+        """推導後每台刀仍只歸一科：各科別分母加總 == 全院區分母。"""
+        def denom(cases):
+            groups = aggregate_cases_by_period(list(cases), mode="monthly")
+            row = next(r for r in groups[0]["indicators"] if r["code"] == "DV04")
+            return row["denominator"]
+
+        total = denom(self._all())
+        keys = {views._case_dept_key(c) for c in self._all()}
+        parts = sum(
+            denom(views._filter_cases_by_scope(self._all(), k, None)) for k in keys
+        )
+        self.assertEqual(parts, total)
+        self.assertEqual(total, 4)

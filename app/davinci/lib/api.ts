@@ -68,6 +68,7 @@ export async function fetchDrilldown(params: {
   by: DrilldownBy;
   dept?: string;
   surgeon?: string;
+  order?: string;
 }): Promise<DrilldownRow[]> {
   const q = new URLSearchParams({
     code: params.code,
@@ -77,6 +78,7 @@ export async function fetchDrilldown(params: {
   });
   if (params.dept) q.set('dept', params.dept);
   if (params.surgeon) q.set('surgeon', params.surgeon);
+  if (params.order) q.set('order', params.order);
   const res = await fetch(`${API_BASE}/api/davinci/drilldown/?${q}`);
   const body = await jsonOrThrow(res);
   return body.data as DrilldownRow[];
