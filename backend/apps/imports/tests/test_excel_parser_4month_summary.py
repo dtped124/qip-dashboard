@@ -31,6 +31,12 @@ FILE_ZHUDONG_JUN = (
 )
 
 
+FILE_ZHUDONG_AUG = (
+    r"C:\Users\akcho\Downloads"
+    r"\東115年醫院評鑑持續性監測指標-臨床指標_8月總表_給主任-竹東.xlsx"
+)
+
+
 class TestDetectColumns:
     def test_with_code_column(self):
         # 竹東 / 111+ 竹北 layout
@@ -336,3 +342,114 @@ class TestZhudong6MonthSummary:
         for y, cnt in per_year.items():
             exp = 6 if y == 115 else 12
             assert cnt == exp, f"HA01-03 竹東 {y} 年應有 {exp} 筆，實得 {cnt}"
+
+
+class TestStrictResolveCodeNameOverridesCode:
+    """名稱完全相符優先於代碼欄（僅完全相符時觸發，不做模糊比對）。"""
+
+    NAME_NO_PAC = "(季)急性病床住院案件住院日數超過三十日比率(%)(不含PAC)"
+    NAME_WITH_PAC = "(季)急性病床住院案件住院日數超過三十日比率(%)(含PAC)"
+    NAME_PLAIN = "(季)急性病床住院案件住院日數超過三十日比率(%)"
+
+    def test_exact_name_overrides_wrong_code_column(self):
+        from apps.indicators.strict_schema import strict_resolve_code
+        assert strict_resolve_code("HA01-03", self.NAME_NO_PAC) == "HA01-03-01"
+        # 空白差異（頭尾空白 / 換行）仍視為完全相符
+        assert strict_resolve_code("HA01-03", "  " + self.NAME_NO_PAC + "\n") == "HA01-03-01"
+
+    def test_correct_code_unchanged(self):
+        from apps.indicators.strict_schema import strict_resolve_code
+        assert strict_resolve_code("HA01-03-01", self.NAME_NO_PAC) == "HA01-03-01"
+        assert strict_resolve_code("HA01-03", self.NAME_WITH_PAC) == "HA01-03"
+        assert strict_resolve_code("HA01-03", self.NAME_PLAIN) == "HA01-03"
+
+    def test_no_fuzzy_when_name_not_exact(self):
+        from apps.indicators.strict_schema import strict_resolve_code
+        # 名稱只是「相似」→ 不觸發覆蓋，維持代碼欄結果
+        assert strict_resolve_code("HA01-03", self.NAME_NO_PAC + "x") == "HA01-03"
+        assert strict_resolve_code("HA01-03", "完全不相干的名稱") == "HA01-03"
+        # 無代碼、名稱不符 → None（維持嚴格）
+        assert strict_resolve_code("", self.NAME_NO_PAC + "x") is None
+        # 無代碼、名稱完全相符 → 由名稱解出
+        assert strict_resolve_code("", self.NAME_NO_PAC) == "HA01-03-01"
+
+
+@pytest.mark.skipif(
+    not os.path.exists(FILE_ZHUDONG_AUG),
+    reason="Source spreadsheet not present in this environment",
+)
+class TestZhudong8MonthSummary:
+    """竹東 8月總表 — 7、8 月總表把「不含PAC」列代碼欄退回寫成 HA01-03
+    （名稱仍是不含PAC 全名）。修正前：被解成 HA01-03 後遭 emitted_codes 防護
+    略過，HA01-03-01 的 115/7、115/8 從未進 DB。修正後：名稱完全相符優先於
+    代碼欄 → 解成 HA01-03-01。"""
+
+    @pytest.fixture(scope="class")
+    def result(self):
+        with open(FILE_ZHUDONG_AUG, "rb") as f:
+            data = f.read()
+        return parse_qip_excel(data, os.path.basename(FILE_ZHUDONG_AUG))
+
+    def _dp(self, result, code, year, month):
+        return next(
+            (d for d in result.data_points
+             if d.indicator_code == code and d.campus == "竹東"
+             and d.year == year and d.month == month),
+            None,
+        )
+
+    def test_ha01_03_01_jul_aug_present(self, result):
+        for m, (exp_n, exp_d, exp_v) in {7: (2, 173, 1.1561), 8: (3, 169, 1.7751)}.items():
+            dp = self._dp(result, "HA01-03-01", 115, m)
+            assert dp is not None, f"HA01-03-01 竹東 115/{m} 應存在"
+            assert dp.numerator == exp_n
+            assert dp.denominator == exp_d
+            assert dp.value == pytest.approx(exp_v, abs=0.01)
+
+    def test_ha01_03_jul_aug_still_with_pac(self, result):
+        for m, (exp_n, exp_d, exp_v) in {7: (8, 173, 4.6243), 8: (6, 169, 3.5503)}.items():
+            dp = self._dp(result, "HA01-03", 115, m)
+            assert dp is not None, f"HA01-03 竹東 115/{m} 應存在"
+            assert dp.numerator == exp_n
+            assert dp.denominator == exp_d
+            assert dp.value == pytest.approx(exp_v, abs=0.01)
+
+    def test_no_duplicate_year_month(self, result):
+        for code in ("HA01-03", "HA01-03-01"):
+            keys = [(d.year, d.month) for d in result.data_points
+                    if d.indicator_code == code and d.campus == "竹東"]
+            assert len(keys) == len(set(keys)), f"{code} 竹東 有重複月份: {sorted(keys)}"
+
+    def test_ha01_03_01_114_matches_db_values(self, result):
+        # 114 分頁舊不含PAC 區塊（代碼標 HA01-03）修正後被解成 HA01-03-01；
+        # 其 n/d 必須與 DB 現有值（取自 6月總表新區塊）一致
+        db = {
+            1: (2, 133), 2: (2, 164), 3: (2, 167), 4: (1, 165), 5: (1, 157), 6: (0, 138),
+            7: (4, 142), 8: (0, 161), 9: (3, 133), 10: (3, 155), 11: (0, 145), 12: (2, 168),
+        }
+        for m, (exp_n, exp_d) in db.items():
+            dp = self._dp(result, "HA01-03-01", 114, m)
+            assert dp is not None, f"HA01-03-01 竹東 114/{m} 應存在"
+            assert (dp.numerator, dp.denominator) == (exp_n, exp_d), f"114/{m}"
+
+    def test_stitched_history_not_shadowed_by_empty_113_block(self, result):
+        # 113 分頁有一個代碼標 HA01-03、格子全空的不含PAC 區塊；修正後它被解成
+        # HA01-03-01，產出的全 None 佔位點不得擋住 ≤113 的縫接
+        anchors = {
+            (113, 1): (8, 408), (113, 4): (7, 448), (113, 7): (8, 521), (113, 10): (5, 443),
+            (112, 4): (2, 455), (111, 1): (8, 414), (110, 7): (11, 216),
+        }
+        for (y, m), (exp_n, exp_d) in anchors.items():
+            dp = self._dp(result, "HA01-03-01", y, m)
+            assert dp is not None, f"HA01-03-01 竹東 {y}/{m} 應存在（拼接）"
+            assert (dp.numerator, dp.denominator) == (exp_n, exp_d)
+        # ≤113 的 HA01-03-01 點集合必須與 HA01-03 竹東完全相等（逐值複製，
+        # 含季合併版型本來就為 None 的月份），代表沒有任何一點被空白區塊取代
+        def _series(code):
+            return {(d.year, d.month): (d.value, d.numerator, d.denominator)
+                    for d in result.data_points
+                    if d.indicator_code == code and d.campus == "竹東" and d.year <= 113}
+        assert _series("HA01-03-01") == _series("HA01-03")
+        ys = {s.year: s for s in result.yearly_summaries
+              if s.indicator_code == "HA01-03-01" and s.campus == "竹東"}
+        assert ys[113].average is not None

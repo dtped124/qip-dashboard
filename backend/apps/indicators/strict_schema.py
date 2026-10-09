@@ -354,22 +354,28 @@ def strict_resolve_code(raw_code: str, indicator_name: str) -> str | None:
     """
     嚴格解析指標代碼：
       1. 若 raw_code 是 HA dd-dd 且在 schema 內 → 採用（必要時做 SOURCE_CODE_REMAP）
-      2. 否則用 indicator_name 完全比對（normalize 後）
-      3. 找不到 → 回傳 None（**不做任何 fuzzy/contains 比對**）
+      2. 例外：指標名稱（normalize 後）**完全等於**某指標的 schema names，且該指標
+         代碼與步驟 1 解出的代碼不同 → 以名稱對應的代碼為準（名稱完全相符優先於
+         代碼欄）。典型案例：竹東 115 年 7、8 月總表把「不含PAC」列的代碼欄退回
+         寫成 HA01-03，但名稱仍是不含PAC 的完整名稱，應解成 HA01-03-01。
+         只在完全相符時觸發；模糊比對一律不採用。
+      3. 否則用 indicator_name 完全比對（normalize 後）
+      4. 找不到 → 回傳 None（**不做任何 fuzzy/contains 比對**）
     """
+    name_code = _NORMALIZED_NAME_TO_CODE.get(_norm(indicator_name))
     if raw_code:
         rc = raw_code.strip()
         # 代碼可能含 HA09-11 之類來源變體 → remap
         mapped = SOURCE_CODE_REMAP.get(rc, rc)
         if mapped in STRICT_INDICATOR_SCHEMA:
-            # 也驗證一下名稱是否相符（避免代碼正確、名稱卻離譜）
-            if _norm(indicator_name) in {_norm(n) for n in STRICT_INDICATOR_SCHEMA[mapped]["names"]}:
-                return mapped
-            # 代碼對、名稱不對 → 仍接受（代碼是更可靠的訊號）但要在 import log
-            # 留紀錄。這裡先回傳，呼叫端負責記警告。
+            # 名稱完全相符且指向另一個指標 → 名稱優先於代碼欄
+            if name_code is not None and name_code != mapped:
+                return name_code
+            # 其餘情況（名稱相符同一指標，或代碼對、名稱不在白名單）→ 採用代碼
+            # （代碼是更可靠的訊號）。名稱不符的警告由呼叫端負責。
             return mapped
 
-    return _NORMALIZED_NAME_TO_CODE.get(_norm(indicator_name))
+    return name_code
 
 
 def validate_nd_names(

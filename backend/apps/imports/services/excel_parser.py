@@ -717,6 +717,23 @@ def _apply_series_stitch(result: ParseResult) -> None:
         campus = rule["campus"]
         up_to = rule["up_to_year"]
 
+        # 來源檔拆分前的歷史年度可能留有「代碼欄寫成來源指標、名稱卻是目標指標」
+        # 的空白區塊（如 113 分頁的不含PAC 區塊，格子全空）。名稱完全相符優先於
+        # 代碼欄後，這些區塊會被解成目標指標並產出全 None 的佔位資料點，若不清掉
+        # 就會擋住縫接。此處只移除「歷史年度且 value/n/d 皆為 None」的佔位點，
+        # 任何帶真實值的目標資料點都保留（不被覆蓋）。
+        result.data_points[:] = [
+            dp for dp in result.data_points
+            if not (
+                dp.indicator_code == target_code
+                and dp.campus == campus
+                and dp.year <= up_to
+                and dp.value is None
+                and dp.numerator is None
+                and dp.denominator is None
+            )
+        ]
+
         existing_dp = {
             (dp.year, dp.month)
             for dp in result.data_points
