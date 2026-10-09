@@ -21,7 +21,7 @@ export interface ExportSlideArgs {
 }
 
 /** SVG 轉 PNG dataURL */
-async function svgToPngDataUrl(
+export async function svgToPngDataUrl(
   svg: SVGSVGElement,
   width: number,
   height: number
