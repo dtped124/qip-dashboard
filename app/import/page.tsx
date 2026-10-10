@@ -4,26 +4,7 @@ import { useEffect, useState } from 'react';
 import { Upload, Clock, FileSpreadsheet, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { ImportWizard } from '@/components/import/ImportWizard';
 import type { ImportLog } from '@/lib/types';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
-
-async function getImportLogsFromAPI(): Promise<ImportLog[]> {
-  const res = await fetch(`${API_BASE}/api/v1/imports/logs/`);
-  const data = await res.json();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (data.data || []).map((log: Record<string, any>) => ({
-    id: log.id,
-    timestamp: new Date(log.created_at),
-    fileName: log.file_name,
-    fileSize: log.file_size,
-    sheetsProcessed: log.sheets_processed || [],
-    dataPointsNew: log.data_points_new,
-    dataPointsUpdated: log.data_points_updated,
-    dataPointsUnchanged: log.data_points_unchanged,
-    revisionsDetected: 0,
-    errors: log.errors || [],
-  }));
-}
+import { correctDatapoint, getImportLogs } from '@/lib/api';
 
 interface WarningInfo {
   indicatorCode: string;
@@ -59,20 +40,15 @@ async function postCorrection(
   newValue: number | null,
   errorText: string
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/imports/correct-datapoint/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      indicator_code: info.indicatorCode,
-      campus: info.campus,
-      year: info.year,
-      month: info.month,
-      new_value: newValue,
-      log_id: logId,
-      error_text: errorText,
-    }),
+  await correctDatapoint({
+    indicator_code: info.indicatorCode,
+    campus: info.campus,
+    year: info.year,
+    month: info.month,
+    new_value: newValue,
+    log_id: logId,
+    error_text: errorText,
   });
-  if (!res.ok) throw new Error('Correction failed');
 }
 
 export default function ImportPage() {
@@ -86,8 +62,11 @@ export default function ImportPage() {
   async function loadLogs() {
     setLoading(true);
     try {
-      const data = await getImportLogsFromAPI();
+      const data = await getImportLogs();
       setLogs(data);
+    } catch (err) {
+      // Keep the page usable (empty state) instead of leaking an unhandled rejection.
+      console.error('Failed to load import logs:', err);
     } finally {
       setLoading(false);
     }

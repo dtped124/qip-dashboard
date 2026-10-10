@@ -11,8 +11,7 @@
 import { useState } from 'react';
 import { Download, Loader2 } from 'lucide-react';
 import { useDashboardStore } from '@/lib/store/dashboardStore';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
+import { downloadFile } from '@/lib/http';
 
 export function ExportElementListButton() {
   const campus = useDashboardStore(s => s.campus);
@@ -21,14 +20,12 @@ export function ExportElementListButton() {
   async function handleClick() {
     setDownloading(true);
     try {
-      const url = `${API_BASE}/api/v1/indicators/export/element-list/?campus=${encodeURIComponent(campus)}`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        throw new Error(`匯出失敗 (HTTP ${res.status})`);
-      }
+      const { blob, filename: serverFilename } = await downloadFile(
+        `/api/v1/indicators/export/element-list/?campus=${encodeURIComponent(campus)}`,
+      );
 
-      // Build sensible default filename (used if Content-Disposition can't be
-      // read — e.g. CORS expose-headers missing). Format mirrors backend:
+      // Build sensible default filename (used if the response carries no
+      // usable Content-Disposition). Format mirrors backend:
       //   YYYYMMDDHHMMSS_要素清單匯出-<prefix>.xlsx
       const now = new Date();
       const pad = (n: number) => String(n).padStart(2, '0');
@@ -43,21 +40,9 @@ export function ExportElementListButton() {
         campus === '竹北' ? '生醫竹北' :
         campus === '竹東' ? '生醫竹東' :
         '新竹';
-      let filename = `${ts}_要素清單匯出-${filenamePrefix}.xlsx`;
+      // Prefer the backend's actual filename
+      const filename = serverFilename ?? `${ts}_要素清單匯出-${filenamePrefix}.xlsx`;
 
-      // Prefer the backend's actual filename if exposed
-      const cd = res.headers.get('content-disposition') || '';
-      const star = cd.match(/filename\*=UTF-8''([^;]+)/i);
-      if (star) {
-        try { filename = decodeURIComponent(star[1]); } catch { /* keep default */ }
-      } else {
-        const plain = cd.match(/filename="([^"]+)"/i);
-        if (plain) {
-          try { filename = decodeURIComponent(plain[1]); } catch { filename = plain[1]; }
-        }
-      }
-
-      const blob = await res.blob();
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = blobUrl;

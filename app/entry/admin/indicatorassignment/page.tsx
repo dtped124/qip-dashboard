@@ -13,6 +13,7 @@ import {
   listUsers,
   listCampuses,
 } from '@/lib/entry/api'
+import { listIndicators } from '@/lib/api'
 import type {
   IndicatorAssignment,
   AssignmentRole,
@@ -20,8 +21,6 @@ import type {
   Campus,
   User,
 } from '@/lib/entry/types'
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8001'
 
 interface IndicatorMeta {
   code: string
@@ -51,15 +50,14 @@ export default function IndicatorAssignmentPage() {
   const fetchData = async () => {
     setLoading(true)
     try {
-      const [a, u, c] = await Promise.all([
+      const [a, u, c, indData] = await Promise.all([
         listAssignments(),
         listUsers(),
         listCampuses(),
+        // Indicators only supply names/categories; as before, a failed load
+        // leaves the page usable with an empty list instead of an error banner.
+        listIndicators().catch((): IndicatorMeta[] => []),
       ])
-      // fetch indicators from the v1 API
-      const indRes = await fetch(`${API_BASE}/api/v1/indicators/`, { credentials: 'include' })
-      const indJson = indRes.ok ? await indRes.json() : { data: [] }
-      const indData: IndicatorMeta[] = Array.isArray(indJson) ? indJson : (indJson.data ?? [])
 
       setAssignments(a)
       setUsers(u)

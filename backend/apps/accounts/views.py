@@ -40,6 +40,9 @@ def auth_logout(request):
     return Response({"detail": "已登出"})
 
 
+# Keep this decorator outermost (above api_view): it sets the csrftoken cookie
+# on this response, which the SPA reads to send X-CSRFToken on writes.
+@ensure_csrf_cookie
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def auth_me(request):

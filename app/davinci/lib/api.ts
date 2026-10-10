@@ -14,32 +14,22 @@ import type {
   DrilldownBy,
   DrilldownRow,
 } from './types';
+import { apiUrl, request } from '@/lib/http';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
-
-async function jsonOrThrow(res: Response) {
-  const body = await res.json().catch(() => null);
-  if (!res.ok) {
-    const message = body?.error?.message || `HTTP ${res.status}`;
-    throw new Error(message);
-  }
-  return body;
-}
+// Errors are ApiError (lib/http.ts); `{error: {code, message}}` bodies surface their message.
 
 export async function fetchDavinciMeta(): Promise<DavinciMeta> {
-  const res = await fetch(`${API_BASE}/api/davinci/meta/`);
-  return jsonOrThrow(res);
+  return request<DavinciMeta>('/api/davinci/meta/');
 }
 
 export async function fetchDavinciIndicators(
   campus: DavinciCampus,
   mode: DavinciMode = 'monthly',
 ): Promise<{ groups: DavinciPeriodGroup[]; spc: Record<string, DavinciSpcSummary> }> {
-  const res = await fetch(
-    `${API_BASE}/api/davinci/indicators/?campus=${encodeURIComponent(campus)}&mode=${mode}`,
+  const body = await request<{ data: DavinciPeriodGroup[]; spc?: Record<string, DavinciSpcSummary> }>(
+    `/api/davinci/indicators/?campus=${encodeURIComponent(campus)}&mode=${mode}`,
   );
-  const body = await jsonOrThrow(res);
-  return { groups: body.data as DavinciPeriodGroup[], spc: body.spc ?? {} };
+  return { groups: body.data, spc: body.spc ?? {} };
 }
 
 /**
@@ -55,10 +45,9 @@ export async function fetchDavinciSeries(
   const q = new URLSearchParams({ campus, mode });
   if (scope?.dept) q.set('dept', scope.dept);
   if (scope?.surgeon) q.set('surgeon', scope.surgeon);
-  const res = await fetch(
-    `${API_BASE}/api/davinci/indicators/${encodeURIComponent(code)}/series/?${q}`,
+  return request<DavinciSeries>(
+    `/api/davinci/indicators/${encodeURIComponent(code)}/series/?${q}`,
   );
-  return (await jsonOrThrow(res)) as DavinciSeries;
 }
 
 export async function fetchDrilldown(params: {
@@ -79,9 +68,8 @@ export async function fetchDrilldown(params: {
   if (params.dept) q.set('dept', params.dept);
   if (params.surgeon) q.set('surgeon', params.surgeon);
   if (params.order) q.set('order', params.order);
-  const res = await fetch(`${API_BASE}/api/davinci/drilldown/?${q}`);
-  const body = await jsonOrThrow(res);
-  return body.data as DrilldownRow[];
+  const body = await request<{ data: DrilldownRow[] }>(`/api/davinci/drilldown/?${q}`);
+  return body.data;
 }
 
 export async function fetchCases(params: {
@@ -100,43 +88,44 @@ export async function fetchCases(params: {
   if (params.dept) q.set('dept', params.dept);
   if (params.surgeon) q.set('surgeon', params.surgeon);
   if (params.order) q.set('order', params.order);
-  const res = await fetch(`${API_BASE}/api/davinci/cases/?${q}`);
-  const body = await jsonOrThrow(res);
+  const body = await request<{ data: DavinciCaseRow[]; total?: number; truncated?: boolean }>(
+    `/api/davinci/cases/?${q}`,
+  );
   return {
-    data: body.data as DavinciCaseRow[],
+    data: body.data,
     total: body.total ?? body.data.length,
     truncated: body.truncated ?? false,
   };
 }
 
+/** href for the xlsx export link (plain `<a>`, so it goes through apiUrl rather than request). */
 export function davinciExportUrl(campus: DavinciCampus): string {
-  return `${API_BASE}/api/davinci/export/?campus=${encodeURIComponent(campus)}`;
+  return apiUrl(`/api/davinci/export/?campus=${encodeURIComponent(campus)}`);
 }
 
 export async function uploadDavinciExcel(file: File): Promise<DavinciImportPreview> {
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`${API_BASE}/api/davinci/import/`, {
+  const body = await request<{ data: DavinciImportPreview }>('/api/davinci/import/', {
     method: 'POST',
-    body: form,
+    form,
   });
-  const body = await jsonOrThrow(res);
-  return body.data as DavinciImportPreview;
+  return body.data;
 }
 
-export async function confirmDavinciImport(logId: number): Promise<{
+interface DavinciImportConfirmResult {
   log_id: number;
   periods: number[];
   campuses: string[];
   cases_written: number;
   values_created: number;
   values_updated: number;
-}> {
-  const res = await fetch(`${API_BASE}/api/davinci/import/confirm/`, {
+}
+
+export async function confirmDavinciImport(logId: number): Promise<DavinciImportConfirmResult> {
+  const body = await request<{ data: DavinciImportConfirmResult }>('/api/davinci/import/confirm/', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ log_id: logId }),
+    json: { log_id: logId },
   });
-  const body = await jsonOrThrow(res);
   return body.data;
 }

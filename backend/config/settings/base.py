@@ -19,6 +19,12 @@ SECRET_KEY = env("DJANGO_SECRET_KEY")
 DEBUG = env("DJANGO_DEBUG")
 ALLOWED_HOSTS = env("DJANGO_ALLOWED_HOSTS")
 
+# The Next.js /api proxy replaces Host with Django's own host and puts the
+# browser's host in X-Forwarded-Host. Trust it so ALLOWED_HOSTS / CSRF origin
+# checks compare against what the browser actually used. Only Next (or the
+# platform's load balancer) should be able to reach Django directly.
+USE_X_FORWARDED_HOST = env.bool("USE_X_FORWARDED_HOST", default=True)
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",

@@ -156,6 +156,18 @@ export interface AssignmentCreatePayload {
   effective_from: string
 }
 
+// ─── 填報截止日設定（/api/admin/deadlines）──────────────────────
+
+export interface DeadlineSetting {
+  id: number
+  year: number          // ROC year (民國年)
+  month: number
+  deadline_day: number
+  note: string
+}
+
+export type DeadlineSettingPayload = Omit<DeadlineSetting, 'id'>
+
 // ─── 驗證結果 ─────────────────────────────────────────────────
 
 export type ValidationLevel = 'error' | 'warning' | 'ok'
