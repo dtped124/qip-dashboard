@@ -41,8 +41,9 @@
   部署：Docker Compose
 
 通訊：
-  前端 → 後端：REST API (http://localhost:8001/api/v1/)
-  環境變數：NEXT_PUBLIC_API_URL=http://localhost:8001
+  前端 → 後端：瀏覽器只打同源相對路徑 /api/*，由 Next rewrites 代理到 Django
+  環境變數：API_INTERNAL_URL（代理目標，build 時固化，預設 http://localhost:8001）；
+            不要再設 NEXT_PUBLIC_API_URL（設了會繞過代理、cookie 失效）
 ```
 
 ### 2.2 專案結構（現行）

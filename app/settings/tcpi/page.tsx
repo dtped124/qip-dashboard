@@ -7,8 +7,7 @@ import { BarChart3, Upload, CheckCircle2, AlertTriangle, ArrowLeft, FileSpreadsh
 import { parseTcpiExcel, isTcpiFormat } from '@/lib/tcpi-parser';
 import { INDICATOR_META } from '@/lib/constants';
 import type { TCPIBenchmark } from '@/lib/types';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
+import { saveTcpiBenchmarks } from '@/lib/api';
 
 export default function TcpiImportPage() {
   const router = useRouter();
@@ -56,13 +55,7 @@ export default function TcpiImportPage() {
   const handleConfirm = useCallback(async () => {
     setSaving(true);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/tcpi/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ benchmarks }),
-      });
-      if (!res.ok) throw new Error(`API error: ${res.status}`);
-      const result = await res.json();
+      const result = await saveTcpiBenchmarks({ benchmarks });
       setSavedCount(result.saved);
       setStep('done');
     } catch (err) {

@@ -14,6 +14,7 @@ import { IndicatorCard } from '@/components/dashboard/IndicatorCard';
 import { StatusMatrix } from '@/components/dashboard/StatusMatrix';
 import { FileSpreadsheet, Database, Loader2 } from 'lucide-react';
 import { loadDashboardFromAPI, uploadExcel } from '@/lib/api';
+import { fetchPublicFile } from '@/lib/http';
 
 export default function HomePage() {
   const store = useDashboardStore();
@@ -48,8 +49,7 @@ export default function HomePage() {
     setLoadingSample(true);
     try {
       // Upload sample.xls to Django API, then reload dashboard
-      const resp = await fetch('/sample.xls');
-      const blob = await resp.blob();
+      const blob = await fetchPublicFile('/sample.xls');
       const file = new File([blob], 'sample.xls', { type: blob.type });
       await uploadExcel(file);
       // Reload dashboard from API
@@ -68,7 +68,6 @@ export default function HomePage() {
       <div className="flex flex-col items-center justify-center h-full text-center">
         <Loader2 size={48} className="text-blue-400 animate-spin mb-4" />
         <p className="text-sm text-gray-500">載入資料中...</p>
-        <p className="text-xs text-gray-400 mt-2">連線 Django API ({process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'})</p>
       </div>
     );
   }

@@ -19,31 +19,18 @@ import type {
   DataNature,
   Direction,
   IndicatorUnit,
+  ImportLog,
   MonthlyAlert,
+  TCPIBenchmark,
 } from './types';
 import { INDICATOR_META } from './constants';
+import { request } from './http';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
+// ── Generic GET wrapper ──
+// Transport (cookies, CSRF, 30s GET timeout, error parsing) lives in lib/http.ts.
 
-// ── Generic fetch wrapper ──
-
-async function apiFetch<T>(path: string): Promise<T> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
-  try {
-    const res = await fetch(`${API_BASE}${path}`, { signal: controller.signal });
-    if (!res.ok) {
-      throw new Error(`API error ${res.status}: ${await res.text()}`);
-    }
-    return res.json();
-  } catch (err: unknown) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new Error('API 連線逾時（30秒），請確認後端是否正在運行');
-    }
-    throw err;
-  } finally {
-    clearTimeout(timeout);
-  }
+function apiFetch<T>(path: string): Promise<T> {
+  return request<T>(path);
 }
 
 // ── Dashboard bulk load ──
@@ -322,7 +309,8 @@ export async function loadAnalysis(code: string, campus: Campus, period?: 'month
 
 // ── Indicator meta (with target settings) ──
 
-interface IndicatorMetaResponse {
+/** Indicator as serialized by the backend (shared by the list and detail endpoints). */
+export interface IndicatorMetaResponse {
   code: string;
   name: string;
   category: string;
@@ -353,19 +341,25 @@ export async function updateIndicatorTarget(
   code: string,
   payload: { targetMode: boolean; targetValue: number | null },
 ): Promise<IndicatorTargetState> {
-  const res = await fetch(`${API_BASE}/api/v1/indicators/${code}/`, {
+  const data = await request<IndicatorMetaResponse>(`/api/v1/indicators/${code}/`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+    json: {
       target_mode: payload.targetMode,
       target_value: payload.targetValue,
-    }),
+    },
   });
-  if (!res.ok) {
-    throw new Error(`更新失敗 (${res.status}): ${await res.text()}`);
-  }
-  const data: IndicatorMetaResponse = await res.json();
   return { targetMode: data.target_mode, targetValue: data.target_value };
+}
+
+/**
+ * GET /api/v1/indicators/ — all active indicators (used by the assignment admin page).
+ * The backend answers `{ data, total }`; a bare array is accepted too.
+ */
+export async function listIndicators(): Promise<IndicatorMetaResponse[]> {
+  const resp = await apiFetch<IndicatorMetaResponse[] | { data?: IndicatorMetaResponse[] }>(
+    '/api/v1/indicators/'
+  );
+  return Array.isArray(resp) ? resp : (resp.data ?? []);
 }
 
 // ── Import API ──
@@ -385,18 +379,84 @@ interface ImportResponse {
  * 上傳 Excel 檔案到 Django API
  */
 export async function uploadExcel(file: File): Promise<ImportResponse['data']> {
-  const formData = new FormData();
-  formData.append('file', file);
+  const form = new FormData();
+  form.append('file', file);
 
-  const res = await fetch(`${API_BASE}/api/v1/imports/upload/`, {
+  const resp = await request<ImportResponse>('/api/v1/imports/upload/', {
     method: 'POST',
-    body: formData,
+    form,
   });
-
-  if (!res.ok) {
-    throw new Error(`Upload failed: ${res.status}`);
-  }
-
-  const resp: ImportResponse = await res.json();
   return resp.data;
+}
+
+interface ImportLogResponse {
+  data: {
+    id: number;
+    file_name: string;
+    file_size: number;
+    sheets_processed: string[] | null;
+    data_points_new: number;
+    data_points_updated: number;
+    data_points_unchanged: number;
+    errors: string[] | null;
+    created_at: string;
+  }[];
+  total: number;
+}
+
+/**
+ * GET /api/v1/imports/logs/ — latest import logs (newest first, max 20),
+ * mapped to the front-end ImportLog shape.
+ */
+export async function getImportLogs(): Promise<ImportLog[]> {
+  const resp = await apiFetch<ImportLogResponse>('/api/v1/imports/logs/');
+  return (resp.data || []).map(log => ({
+    id: log.id,
+    timestamp: new Date(log.created_at),
+    fileName: log.file_name,
+    fileSize: log.file_size,
+    sheetsProcessed: log.sheets_processed || [],
+    dataPointsNew: log.data_points_new,
+    dataPointsUpdated: log.data_points_updated,
+    dataPointsUnchanged: log.data_points_unchanged,
+    revisionsDetected: 0,
+    errors: log.errors || [],
+  }));
+}
+
+export interface CorrectDatapointPayload {
+  indicator_code: string;
+  campus: string;
+  year: number;
+  month: number;
+  /** null = keep the stored value and only drop the warning from the log. */
+  new_value: number | null;
+  log_id: number;
+  /** Exact warning text to remove from the import log's errors. */
+  error_text: string;
+}
+
+/** POST /api/v1/imports/correct-datapoint/ — fix one warned data point and clear its warning. */
+export async function correctDatapoint(payload: CorrectDatapointPayload): Promise<void> {
+  await request<void>('/api/v1/imports/correct-datapoint/', {
+    method: 'POST',
+    json: payload,
+    responseType: 'void',
+  });
+}
+
+// ── TCPI benchmarks ──
+
+export interface SaveTcpiBenchmarksPayload {
+  benchmarks: TCPIBenchmark[];
+}
+
+/** POST /api/v1/tcpi/ — replaces all stored TCPI benchmarks; `saved` = rows kept after matching indicator codes. */
+export async function saveTcpiBenchmarks(
+  payload: SaveTcpiBenchmarksPayload
+): Promise<{ saved: number; total: number }> {
+  return request<{ saved: number; total: number }>('/api/v1/tcpi/', {
+    method: 'POST',
+    json: payload,
+  });
 }

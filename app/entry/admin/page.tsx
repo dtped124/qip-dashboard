@@ -9,29 +9,8 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import UserManagement from '@/components/entry/UserManagement'
-
-interface DeadlineSetting {
-  id?: number
-  year: number
-  month: number
-  deadline_day: number
-  note: string
-}
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8001'
-
-async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    ...options,
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(err.detail ?? `HTTP ${res.status}`)
-  }
-  return res.json()
-}
+import { listDeadlines, saveDeadline } from '@/lib/entry/api'
+import type { DeadlineSetting } from '@/lib/entry/types'
 
 // ─── 截止日設定卡片 ───────────────────────────────────────────
 
@@ -44,7 +23,7 @@ function DeadlineCard() {
   const tw_year = new Date().getFullYear() - 1911
 
   useEffect(() => {
-    apiFetch<DeadlineSetting[]>(`/api/admin/deadlines?year=${tw_year}`)
+    listDeadlines(tw_year)
       .then(setSettings)
       .catch(() => {})
   }, [tw_year])
@@ -52,12 +31,9 @@ function DeadlineCard() {
   const handleSave = async () => {
     setSaving(true)
     try {
-      await apiFetch('/api/admin/deadlines', {
-        method: 'POST',
-        body: JSON.stringify(form),
-      })
+      await saveDeadline(form)
       setMsg('✅ 已儲存')
-      const data = await apiFetch<DeadlineSetting[]>(`/api/admin/deadlines?year=${tw_year}`)
+      const data = await listDeadlines(tw_year)
       setSettings(data)
     } catch (e: unknown) {
       setMsg(`❌ ${e instanceof Error ? e.message : '儲存失敗'}`)

@@ -600,12 +600,9 @@ def tcpi_benchmarks(request):
         return Response({"data": data, "total": len(data)})
 
     # POST: bulk import
-    import json
-    try:
-        body = json.loads(request.body)
-    except json.JSONDecodeError:
-        return Response({"error": {"code": "BAD_REQUEST", "message": "Invalid JSON"}}, status=400)
-
+    # Use DRF's parsed payload: once SessionAuthentication has enforced CSRF the
+    # request stream is already consumed, and request.body would raise RawPostDataException.
+    body = request.data if isinstance(request.data, dict) else {}
     items = body.get("benchmarks", [])
     if not items:
         return Response({"error": {"code": "BAD_REQUEST", "message": "No benchmarks provided"}}, status=400)

@@ -1,10 +1,14 @@
 /**
  * 填報系統 API 客戶端
- * 所有 API 呼叫集中在此，方便日後切換 base URL
+ * All entry-system API calls live here; transport (base URL, cookies, CSRF,
+ * error parsing) is handled by lib/http.ts.
  */
+import { request, type RequestOptions } from '../http'
 import type {
   AssignmentCreatePayload,
   Campus,
+  DeadlineSetting,
+  DeadlineSettingPayload,
   EntryFormResponse,
   FormValue,
   IndicatorAssignment,
@@ -16,57 +20,9 @@ import type {
   UserUpdatePayload,
 } from './types'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8001'
-
-function getCsrfToken(): string {
-  const match = document.cookie.match(/csrftoken=([^;]+)/)
-  return match ? match[1] : ''
-}
-
-async function apiFetch<T>(
-  path: string,
-  options: RequestInit = {}
-): Promise<T> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string>),
-  }
-  // Django CSRF: non-safe methods 需帶 X-CSRFToken header
-  const method = (options.method ?? 'GET').toUpperCase()
-  if (method !== 'GET' && method !== 'HEAD') {
-    const token = getCsrfToken()
-    if (token) headers['X-CSRFToken'] = token
-  }
-
-  const res = await fetch(`${API_BASE}${path}`, {
-    credentials: 'include',
-    headers,
-    ...options,
-  })
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => null)
-    // DRF 回傳的錯誤格式有兩種：
-    //   { "detail": "..." }                            — 一般 API 錯
-    //   { "non_field_errors": ["..."], "欄位": [...] } — serializer 驗證錯
-    // 兩種都要能轉成人話訊息，不要只丟 "HTTP 400" 讓使用者看得霧煞煞
-    let msg: string | null = null
-    if (err && typeof err === 'object') {
-      if (typeof err.detail === 'string') msg = err.detail
-      else if (Array.isArray(err.non_field_errors) && err.non_field_errors.length) msg = String(err.non_field_errors[0])
-      else {
-        // 其他欄位錯誤：取第一個有錯誤的欄位
-        for (const [k, v] of Object.entries(err)) {
-          if (Array.isArray(v) && v.length) { msg = `${k}: ${v[0]}`; break }
-        }
-      }
-    }
-    throw new Error(msg ?? `HTTP ${res.status} ${res.statusText}`)
-  }
-
-  if (res.status === 204) return undefined as T
-
-  return res.json() as Promise<T>
+/** Thin wrapper over the shared HTTP client; failures reject with ApiError. */
+function apiFetch<T>(path: string, options?: RequestOptions): Promise<T> {
+  return request<T>(path, options)
 }
 
 // ─── 認證 ──────────────────────────────────────────────────────
@@ -74,7 +30,7 @@ async function apiFetch<T>(
 export async function login(employeeId: string, password: string): Promise<User> {
   return apiFetch<User>('/api/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ employee_id: employeeId, password }),
+    json: { employee_id: employeeId, password },
   })
 }
 
@@ -95,14 +51,14 @@ export async function listUsers(): Promise<User[]> {
 export async function createUser(data: UserCreatePayload): Promise<User> {
   return apiFetch<User>('/api/admin/users', {
     method: 'POST',
-    body: JSON.stringify(data),
+    json: data,
   })
 }
 
 export async function updateUser(id: number, data: UserUpdatePayload): Promise<User> {
   return apiFetch<User>(`/api/admin/users/${id}`, {
     method: 'PATCH',
-    body: JSON.stringify(data),
+    json: data,
   })
 }
 
@@ -119,7 +75,7 @@ export async function resetPassword(id: number): Promise<{ detail: string }> {
 export async function changePassword(newPassword: string): Promise<void> {
   await apiFetch('/api/auth/change-password', {
     method: 'POST',
-    body: JSON.stringify({ new_password: newPassword }),
+    json: { new_password: newPassword },
   })
 }
 
@@ -140,12 +96,28 @@ export async function listAssignments(campus?: string, indicator?: string): Prom
 export async function createAssignment(data: AssignmentCreatePayload): Promise<IndicatorAssignment> {
   return apiFetch<IndicatorAssignment>('/api/admin/assignments', {
     method: 'POST',
-    body: JSON.stringify(data),
+    json: data,
   })
 }
 
 export async function deleteAssignment(id: number): Promise<void> {
   await apiFetch<void>(`/api/admin/assignments/${id}`, { method: 'DELETE' })
+}
+
+// ─── Submission deadlines (admin) ───────────────────────────────
+
+/** GET /api/admin/deadlines — all overrides, or only those of one ROC year. */
+export async function listDeadlines(year?: number): Promise<DeadlineSetting[]> {
+  const qs = year !== undefined ? `?year=${year}` : ''
+  return apiFetch<DeadlineSetting[]>(`/api/admin/deadlines${qs}`)
+}
+
+/** POST /api/admin/deadlines — create or overwrite the deadline of one (year, month). */
+export async function saveDeadline(payload: DeadlineSettingPayload): Promise<DeadlineSetting> {
+  return apiFetch<DeadlineSetting>('/api/admin/deadlines', {
+    method: 'POST',
+    json: payload,
+  })
 }
 
 // ─── 填報 API ──────────────────────────────────────────────────
@@ -182,7 +154,7 @@ export interface DraftPayload {
 export async function saveDraft(payload: DraftPayload): Promise<SaveDraftResponse> {
   return apiFetch<SaveDraftResponse>('/api/entry/save-draft', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    json: payload,
   })
 }
 
@@ -193,7 +165,7 @@ export async function submitCategory(
 ): Promise<SubmitResponse> {
   return apiFetch<SubmitResponse>('/api/entry/submit', {
     method: 'POST',
-    body: JSON.stringify({ year, month, category }),
+    json: { year, month, category },
   })
 }
 
@@ -214,7 +186,7 @@ export async function getReviewDetail(
 export async function approveCategory(campus: string, year: number, month: number, category: string) {
   return apiFetch('/api/review/approve', {
     method: 'POST',
-    body: JSON.stringify({ campus, year, month, category }),
+    json: { campus, year, month, category },
   })
 }
 
@@ -223,7 +195,7 @@ export async function rejectCategory(
 ) {
   return apiFetch('/api/review/reject', {
     method: 'POST',
-    body: JSON.stringify({ campus, year, month, category, reason }),
+    json: { campus, year, month, category, reason },
   })
 }
 
@@ -232,14 +204,14 @@ export async function editEntry(
 ) {
   return apiFetch('/api/review/edit-entry', {
     method: 'PATCH',
-    body: JSON.stringify({ entry_id: entryId, field, new_value: newValue, reason }),
+    json: { entry_id: entryId, field, new_value: newValue, reason },
   })
 }
 
 export async function finalizeMonth(campus: string, year: number, month: number) {
   return apiFetch('/api/review/finalize', {
     method: 'POST',
-    body: JSON.stringify({ campus, year, month }),
+    json: { campus, year, month },
   })
 }
 
@@ -258,18 +230,18 @@ export async function excludeCases(
 ) {
   return apiFetch('/api/case-list/exclude', {
     method: 'POST',
-    body: JSON.stringify({
+    json: {
       case_record_ids: caseRecordIds,
       exclusion_reason_code: exclusionReasonCode,
       exclusion_note: exclusionNote,
-    }),
+    },
   })
 }
 
 export async function restoreCases(caseRecordIds: number[]) {
   return apiFetch('/api/case-list/restore', {
     method: 'POST',
-    body: JSON.stringify({ case_record_ids: caseRecordIds }),
+    json: { case_record_ids: caseRecordIds },
   })
 }
 
@@ -282,7 +254,7 @@ export async function reviewExclusion(
 ) {
   return apiFetch('/api/case-list/review-exclusion', {
     method: 'POST',
-    body: JSON.stringify({ case_record_id: caseRecordId, approved, reviewer_note: reviewerNote }),
+    json: { case_record_id: caseRecordId, approved, reviewer_note: reviewerNote },
   })
 }
 
