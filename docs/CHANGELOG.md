@@ -1,5 +1,71 @@
 # 更新日誌 (CHANGELOG)
 
+## 雲端化 P7 — 平台無關部署（2026-10-11，`feat/cloud-ready-deploy`）
+
+雲端平台還沒決定，所以只交付「平台無關」的部分：兩個映像、一份 compose 樣板、啟動程序、健康檢查與 production 設定。TLS、網域、每 IP 限流、備份是平台的事，列在 `docs/DEPLOYMENT.md` §7。開發堆疊（根目錄 `docker-compose.yml`、`start.bat`）的流程不變，但它和正式堆疊現在明確分開（見下面「與開發堆疊分開」）。
+
+### ✨ 新功能 / 改進
+- **兩個映像**：`backend/Dockerfile`（`python:3.12-slim`；沒有 apt／編譯器，相依套件都用預編 wheel；build 時 `collectstatic`，失敗就中止 build，拿掉 `|| true`；非 root uid 10001 且有家目錄，`/app/media` 歸它；`ENTRYPOINT ["qip-entrypoint"]`、無 CMD）與新的 `Dockerfile.web`（deps → builder → runner 三階段；Next `standalone` 輸出；`node:20-alpine` 非 root；`HOSTNAME=0.0.0.0 PORT=3000`）。`API_INTERNAL_URL`、`API_PROXY_TIMEOUT_MS`、`NEXT_HSTS_SECONDS` 是 web 的 **build 引數**（`next.config.mjs` 在 `next build` 時求值並烘進路由表，改了要重新 build）；`NEXT_PUBLIC_API_URL` 不設，瀏覽器一律打同源 `/api/*`。兩個 `.dockerignore`（根目錄、`backend/`）把真實資料（`*.xls*`、`*.csv`、`media/`、`local-data/`）、`.env*`、`.git`、`venv` 擋在 build context 之外
+- **正式映像不含測試工具**：`backend/requirements.txt` 只剩應用程式的相依；pytest、pytest-django、pytest-cov、ruff 搬到新的 `backend/requirements-dev.txt`（開頭 `-r requirements.txt`）。`backend/Dockerfile` 的 build 引數 `INSTALL_DEV` 預設 0，只有傳 1 才安裝它；根目錄開發 `docker-compose.yml` 的 `api` 以 `build.args.INSTALL_DEV: "1"` 建映像，所以 `docker compose exec api pytest` 照常能用
+- **啟動程序**：`backend/entrypoint.sh`（POSIX sh、`set -eu`、LF）每次啟動先跑 `manage.py bootstrap`，再 `exec` 指定的指令，沒有指令就啟動 gunicorn（`0.0.0.0:$PORT`，`GUNICORN_WORKERS` 預設 3、`GUNICORN_TIMEOUT` 預設 120 秒）。只有 `RUN_BOOTSTRAP` 是 `0`、`false`、`no`（不分大小寫）才略過 bootstrap；其他值（包含留空，也包含 `true`、`off` 這類猜測）都照常執行，免得打錯字就在空資料庫上啟動伺服器。`bootstrap`（新 app `apps/core`）：等資料庫（最多 60 次、每次 2 秒）→ 在獨立連線上取 `pg_advisory_lock`（多副本同時啟動時依序進行）→ 檢查 `DB_SCHEMA`，不存在才 `CREATE SCHEMA` → `migrate --noinput` → `seed_entry_base --only-missing`、`seed_indicators --only-missing` → 設了 `SEED_ADMIN_PASSWORD` 才跑 `seed_admin`（`admin` 已存在則略過）→ 放鎖。每一步印一行 `[bootstrap] …`，任何一步失敗都放鎖後以非 0 結束。`DB_SCHEMA` 只接受 `^[a-z_][a-z0-9_]*$`（會進 DDL，所以要驗證；只收小寫，因為連線的 `search_path` 沒加引號、PostgreSQL 會把它轉成小寫，`CREATE SCHEMA` 加了引號——大寫的名稱會建出一個、卻去找另一個）
+- **`GET /healthz`**（`apps/core/views.py`，純 Django view，不經 DRF、不需登入）：資料庫答得出 `SELECT 1` 就回 200 `{"status":"ok"}`，否則 503 `{"status":"unavailable"}`（原因只寫 log，不回給呼叫者）；`Cache-Control: no-store`。多做 `SELECT 1` 是因為 `CONN_MAX_AGE` 開著時，`ensure_connection()` 對「伺服器已經斷掉的舊連線」會直接成功。Next 只代理 `/api/*`，所以對外網域上沒有這個路徑
+- **`seed_indicators`、`seed_entry_base` 加 `--only-missing`**（與 `--clear` 互斥）：只新增資料庫裡還沒有的項目，不覆寫管理員改過的名稱、目標值、排序，也**不會**把被停用的指標重新啟用（不帶旗標時行為不變，仍是 `update_or_create`）。`start.bat` 的兩個 seed 也改成帶 `--only-missing`；`migrate` 和 `seed_admin` 保留，加註解說明開發 api 映像重建後由 bootstrap 接手
+- **`docker-compose.prod.yml`**（根目錄）：`db`（postgres:16-alpine）、`redis`、`api`、`web`；只有 `web` 發佈 port（`${WEB_BIND:-0.0.0.0}:${WEB_PORT:-3000}:3000`，本機試跑用 `WEB_BIND=127.0.0.1`）；各服務都有 healthcheck，`api` 等 `db`／`redis` healthy、`web` 等 `api` healthy；`api`、`web` 加 `init: true`（行程 1 是 tini：轉發 SIGTERM、回收殭屍行程）；`media` volume 掛在 `/app/media`。`api` 的環境來自 `env_file: ${ENV_FILE:-.env.prod}`；本機試跑時在 `--env-file` 那份檔案裡寫 `ENV_FILE=<自己的檔名>`，一個檔案同時管內插與容器環境
+- **Django 設定**：`DATABASE_URL`（`postgres://…`，可帶 `sslmode` 等選項）有填就蓋過 `DB_*`，`search_path` 併進 libpq 的 `options` 而不是蓋掉它；`DB_CONN_MAX_AGE`（預設 60）＋ `CONN_HEALTH_CHECKS`；`DB_CONNECT_TIMEOUT`（預設 5 秒，寫進 `OPTIONS.connect_timeout`，`DATABASE_URL` 自帶的優先）——沒有它，連不上的資料庫每次嘗試要等作業系統的逾時（約兩分鐘），bootstrap 的重試迴圈等於卡死；`CORS_ALLOWED_ORIGINS`、`CSRF_TRUSTED_ORIGINS` 預設空清單。`prod.py` 重寫：`DJANGO_ALLOWED_HOSTS` 沒設就拒絕啟動；**`DJANGO_SECRET_KEY` 空的、不足 50 字元、或含範本字樣（`change-me`、`dev-secret-key`、`collectstatic-only`、`django-insecure-` …，不分大小寫）就拒絕啟動，錯誤訊息不重複金鑰**；`SECURE_PROXY_SSL_HEADER`；`SECURE_HSTS_SECONDS`（預設 0）；`SECURE_SSL_REDIRECT`（預設 false，`/healthz` 豁免）；`SESSION_COOKIE_SECURE`、`CSRF_COOKIE_SECURE` 預設 true（可由環境變數關掉，只為了在本機用 http 試跑）；靜態檔走 WhiteNoise（`CompressedManifestStaticFilesStorage`）；DRF 只輸出 JSON；日誌全部到 stdout／stderr（`django.request`、`axes`）。**WhiteNoise 只在 `prod.py` 才加進 `MIDDLEWARE`**，不放 `base.py`：開發映像不必裝這個套件，開發與測試照常跑。映像 build 時 `collectstatic` 用的金鑰是 `build-only-…`（65 字元），只在 `COLLECTSTATIC_ONLY=1`（只寫在那一行 `RUN`，不在映像環境裡）時通過，所以執行中的容器不會誤用它
+- **`next.config.mjs`**：`headers()` 在 `NEXT_HSTS_SECONDS > 0` 時對所有回應送 `Strict-Transport-Security: max-age=…`（HTML 由 Next 回應，Django 的 `SECURE_HSTS_SECONDS` 只涵蓋 API 與 admin）；0、空值、非數字、負數都不送。同樣在 build 時固化
+- **`.env.prod.example`**（根目錄，正式環境用，複製成 `.env.prod`；分 Web／Django／資料庫與快取／執行與管理四組，每個變數一行說明，含 media 單副本＋持久 volume 的說明）與 `backend/.env.example`（在主機上直接跑 `manage.py` 用；`DB_PORT` 與 `REDIS_URL` 改成開發堆疊在主機上對外的 5433／6380，並註明容器內是 5432／6379）。`.gitignore`：`.env.*` 一律忽略，只放行 `.env.example`、`.env.prod.example`，另加 `backend/staticfiles/`；`.gitattributes` 讓 `*.sh` 一律 LF（CRLF 的 `#!/bin/sh` 在容器裡會變成「no such file or directory」）
+- **`docs/DEPLOYMENT.md`**（新）：架構、與開發堆疊的關係、本機 production 試跑、上雲必填變數、首次啟動順序、對外行為、上線檢查、平台待辦、疑難排解
+
+### 與開發堆疊分開
+- `docker-compose.prod.yml` 與 `docker-compose.yml` 在同一個目錄。原本兩份檔案都用目錄名 `qip-dashboard` 當 project 名稱，而且都讀根目錄的 `.env`：兩邊同名的 `api`、`redis` 會被 Compose 當成同一個容器（`up` 用正式設定換掉開發的容器，`down` 把它們刪掉，`--remove-orphans` 連 `postgres` 也刪），開發堆疊也會吃到正式的密碼。現在正式堆疊的 project 名稱固定為 `qip-prod`（檔案頂層的 `name:`，`-p` 仍可蓋過），設定檔是 `.env.prod`、指令一律帶 `--env-file .env.prod`（`--env-file` 會取代 Compose 自動讀取的 `.env`），容器、volume、網路都分開。根目錄 `.env`（有的話）只屬於開發堆疊。唯一會撞的是埠：`WEB_PORT` 預設 3000，和 `npm run dev` 一樣
+
+### 🔧 變更 / 破壞點
+- production 設定**必須**有 `DJANGO_ALLOWED_HOSTS`，也**必須**有合格的 `DJANGO_SECRET_KEY`，不然在載入設定時 `ImproperlyConfigured`。`manage.py` 的預設仍是 `config.settings.dev`；映像（`ENV`）與 `entrypoint.sh` 的預設是 `config.settings.prod`，根目錄開發 compose 明確設 `config.settings.dev`
+- 正式堆疊的設定檔從 `.env` 改成 `.env.prod`（樣板 `.env.prod.example`），指令要帶 `--env-file .env.prod`
+- `backend/requirements.txt` 不再含 pytest、ruff：在主機上開發請 `pip install -r requirements-dev.txt`；開發 api 映像要 `docker compose build api` 之後才用新的 `INSTALL_DEV=1` 設定（現有的舊映像本來就有 pytest）
+- `DB_SCHEMA` 只接受小寫（原本 bootstrap 接受大寫，但 search_path 會找錯 schema）；`RUN_BOOTSTRAP` 的意義見上面
+- `base.py` 不再預設放行 localhost 的 CORS／CSRF 來源；開發用的預設與 `localhost:*` regex 搬到 `dev.py`。`dev.py` 另把 `CONN_MAX_AGE` 固定為 0（`runserver` 每個請求一條新執行緒，持久連線不會被重用）
+- api 映像現在有 `ENTRYPOINT`：`docker compose run api <指令>` 會先跑 bootstrap（`RUN_BOOTSTRAP=0` 可略過）；`docker compose exec` 不經過 entrypoint，用的是映像的 `DJANGO_SETTINGS_MODULE`（production）。開發 compose 的 `command: python manage.py runserver …` 不變，重建 api 映像後會多跑一次無害的 bootstrap，容器改以 uid 10001 執行
+- 刪除：Streamlit 舊儀表板（`backend/dashboard/`）、`backend/docker-compose.yml`、`backend/docker-compose.prod.yml`、`backend/start.bat`；`CELERY_*` 設定（含 `QIP-Dashboard-工作說明書.md` 裡的範例）；`celery`、`streamlit`、`plotly`、`pandas` 四個相依套件（`backend/apps`、`backend/config` 沒有任何 import）。根目錄 `start.bat` 不再呼叫已刪的 backend compose
+
+### 🐛 修正
+- 驗證時發現：gunicorn 25.1 起會在 `$HOME/.gunicorn/` 建控制 socket，非 root 使用者沒有家目錄時每次啟動都記一行 `Control server error: Permission denied: '/home/app'`。`useradd` 改為 `--create-home`（不改 gunicorn 的參數，所以舊版 gunicorn 也不受影響）
+- 稽核抓到並修掉：正式與開發堆疊撞 project 名稱、共用 `.env`（上面「與開發堆疊分開」）；`start.bat` 每次啟動都用不帶旗標的 seed 覆寫管理員改過的名稱與目標值、並重新啟用被停用的指標；prod 讓空的或範本的 `DJANGO_SECRET_KEY` 靜默通過（舊的 `collectstatic-only`、`dev-secret-key-change-in-production`）；`DB_SCHEMA` 大小寫與 search_path 不一致；`RUN_BOOTSTRAP=true` 之類的值悄悄略過 bootstrap；`.dockerignore` 只擋 `*.xls`／`*.xlsx`（改成 `**/*.xls*`、`**/*.csv`）；`DEPLOYMENT.md` 的容器內檢查用了映像裡沒有的 `curl`、也沒講清楚 `check --deploy` 在建議設定下會有 W004 與 W008
+
+### ⚠️ 已知限制 / 平台待辦
+- **每 IP 限流不在本專案**：Next 代理不補 `X-Forwarded-For`，Django 看到的來源位址對所有人都一樣，登入鎖定（5 次失敗鎖 5 分鐘）實質上只看帳號。`/api/auth/login` 的每 IP 速率限制要在平台邊緣做
+- `:8000`（開發堆疊 `:8001`）不可對外；直連 Django 會繞過 Next 與邊緣的限流，也能自己帶 `X-Forwarded-*` 偽造 HTTPS 與主機名稱。`docker-compose.prod.yml` 只發佈 `web`
+- HTTPS／HSTS 在平台邊緣處理（邊緣必須送並**覆寫** `X-Forwarded-Proto`）；HSTS 瀏覽器會記住，確認 HTTPS 全程可用後再分段調高（`NEXT_HSTS_SECONDS` 要重新 build web）
+- **media volume 必須持久，而且目前只能單一 api 副本**：達文西匯入的「預覽 → 確認」要讀回 `/app/media/davinci_imports/…` 的檔案，多副本之間沒有共享檔案系統
+- django-axes 每次登入留一筆 AccessLog，要排程 `manage.py axes_reset_logs --age-days N`；Django `/admin/` 不經 Next（對外網域上是 404），要走內網連 api；備份（`pg_dump`、media）與還原演練；`npm audit` 目前有已知漏洞的依賴，未處理；Python 相依在 `requirements.txt` 沒有鎖版本，每次 build 取當下最新
+- 要更新指標的預設資料（名稱、單位、別名）得手動跑不帶旗標的 `seed_indicators`，它會覆寫並重新啟用被停用的指標
+- 開發 api 映像（`qip-dashboard-api`）是舊的，沒有 whitenoise、entrypoint，也還沒用 `INSTALL_DEV`；它以 bind mount 讀 `./backend`，所以照常運作。下次 `docker compose build api` 才會換成新映像
+
+### 📁 修改檔案
+| 檔案 | 修改內容 |
+|------|---------|
+| `backend/apps/core/`（新） | `bootstrap` 指令、`healthz`、`tests/test_core.py`（健康檢查、bootstrap 步驟與鎖、schema 名稱、`--only-missing`、`DATABASE_URL`／逾時、prod 設定、金鑰檢查、映像內容）、`tests/test_entrypoint.py`（用假的 `python`／`gunicorn` 驗證入口腳本） |
+| `backend/entrypoint.sh`（新）、`backend/Dockerfile`、`backend/.dockerignore` | 入口腳本；映像（非 root、collectstatic、無 apt、`INSTALL_DEV`）；build context 排除項 |
+| `backend/config/settings/{base,dev,prod}.py`、`backend/config/urls.py` | 見上；`apps.core` 加進 `INSTALLED_APPS`、`/healthz` 路由 |
+| `backend/apps/entry/management/commands/seed_entry_base.py`、`backend/apps/indicators/management/commands/seed_indicators.py` | `--only-missing` |
+| `backend/requirements.txt`、`backend/requirements-dev.txt`（新）、`backend/pyproject.toml` | 加 `whitenoise`；刪 `celery`、`streamlit`、`plotly`、`pandas`；測試與 lint 工具搬到 dev 檔 |
+| `Dockerfile.web`、`.dockerignore`、`docker-compose.prod.yml`、`.env.prod.example`、`backend/.env.example`、`.gitattributes`、`.gitignore`（新／改） | web 映像與部署樣板 |
+| `next.config.mjs` | `headers()`：`NEXT_HSTS_SECONDS` |
+| `docker-compose.yml`、`start.bat` | 刪 `CELERY_*` 與對已刪 backend compose 的呼叫；`INSTALL_DEV`；seed 帶 `--only-missing` |
+| `backend/dashboard/`、`backend/docker-compose.yml`、`backend/docker-compose.prod.yml`、`backend/start.bat`（刪） | 退役的 Streamlit 與舊 compose |
+| `docs/DEPLOYMENT.md`（新）、`docs/DEVELOPMENT_GUIDE.md`、`docs/PROJECT_CONTEXT.md`、`docs/TODO.md`、`docs/USER_MANUAL.md`、`docs/CHANGELOG.md`、`HANDOFF.md`、`QIP-Dashboard-工作說明書.md` | 部署說明；移除 Streamlit／celery／舊 compose 的字句 |
+
+### ✅ 測試與驗證
+- `docker compose exec -T api pytest -q -p no:cacheprovider`：715 passed、23 skipped、1 failed（既有的 `test_control_chart.py::test_binomial_rare_event_returns_imr`，非本案）；其中 `apps/core` 86 條（含金鑰檢查、schema 名稱、`connect_timeout`、`RUN_BOOTSTRAP` 各種值、映像內容）。`manage.py check` 無 issue、`makemigrations --check` 無變更；`npx tsc --noEmit` 零錯誤；`npx next lint` 只有既有的 3 個 exhaustive-deps 警告；`npm run test:unit` 126 條全綠
+- `docker compose config`：根目錄開發檔通過，`api.build.args.INSTALL_DEV` 是 `1`、project 名稱仍是 `qip-dashboard`；`docker-compose.prod.yml` 通過，project 名稱是 `qip-prod`、web 的發佈位址是 `127.0.0.1:3100->3000`、`api` 沒有 `INSTALL_DEV`。`git check-ignore`：`.env`、`.env.prod`、`.env.prodtest` 被忽略，`.env.prod.example` 不被忽略。另用一個測試目錄確認：給了 `--env-file` 就不會讀目錄裡的 `.env`
+- 本機 production 試跑（獨立 project `qip-prodtest`，web 在 `127.0.0.1:3100`；跑了兩次，第二次是稽核修正後重新 build）：
+  - 第一次：四個服務 healthy；`/entry/login` 200、`/api/auth/me` 403、web 上的 `/healthz` 與 `/admin/` 404、api 內 `/healthz` 與 `/static/admin/css/base.css` 200；web 的 `/app/public` 為空、兩個映像裡都沒有 `.xls*`、`/app/media` 為空；`restart api` 後 log 有 `No migrations to apply` 與「略過」；兩個副本同時對空的 schema 跑 bootstrap：一個建立並 migrate，另一個等鎖後看到 `No migrations to apply`；經 3100 的端對端：seed admin 登入 → `/api/v1/dashboard/?campus=竹北` 403 `password_change_required` → 沒帶 CSRF 的 change-password 403 `csrf_failed`、帶了 200 → dashboard 200；`SECURE_SSL_REDIRECT=true` 時 `/healthz` 仍 200、其他路徑 301；經 Next 代理的 `X-Forwarded-Proto: https` 會被 Django 採用，不在 `DJANGO_ALLOWED_HOSTS` 的 Host 回 400
+  - 第二次：四個服務 healthy、web 綁在 `127.0.0.1`；api 映像 414 MB（原本 470 MB），沒有 pytest、ruff、coverage（`import pytest` → `ModuleNotFoundError`）；`check --deploy` 在 `.env.prod.example` 的建議值下只有 W004（HSTS）與 W008（`SECURE_SSL_REDIRECT=false`）；api、web 的行程 1 是 `docker-init`；`DJANGO_SECRET_KEY=dev-secret-key-change-in-production-…` 在真實映像裡 exit 1、訊息不含金鑰；`RUN_BOOTSTRAP=true` 仍跑 bootstrap、`no` 略過；連不上的資料庫（`DB_HOST=10.255.255.1`）一次嘗試 5.0 秒就放棄；端對端登入流程同上
+- 兩份 `.dockerignore` 用 `FROM scratch` 的測試 context 驗證：`a.xls`、`a.xlsx`、`a.xlsm`、`a.xlsb`、`A.XLS`、`b.Xlsx`、`a.csv`、`A.Csv`（任何深度）都擋掉，其他檔案照常進 context（匹配分大小寫，所以另加字元集的寫法）
+- `git ls-files --eol backend/entrypoint.sh`（加入暫存區後）：`i/lf w/lf attr/text eol=lf`
+
+---
+
 ## 雲端化 P6 — 欄位級指派：前端（2026-10-11，`feat/field-assignment-ui`）
 
 只動前端與文件；後端是 P5。目的：讓前端跟上 P5 的後端把關——以前每次存檔都把整個面向所有指標整包送回（現在會被 400 `field_not_assigned` 擋）、不帶院區（多院區時 400 `campus_required`）、看不出哪個欄位是別人負責的、送審缺漏看不到負責人。

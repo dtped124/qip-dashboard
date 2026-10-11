@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "axes",
     # Local apps
+    "apps.core",
     "apps.accounts",
     "apps.entry",
     "apps.indicators",
@@ -82,20 +83,51 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-# Database — PostgreSQL with schema isolation
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": env("DB_NAME", default="qm_center"),
-        "USER": env("DB_USER", default="qm_admin"),
-        "PASSWORD": env("DB_PASSWORD", default=""),
-        "HOST": env("DB_HOST", default="localhost"),
-        "PORT": env("DB_PORT", default="5432"),
-        "OPTIONS": {
-            "options": f"-c search_path={env('DB_SCHEMA', default='qip')},public",
-        },
-    }
-}
+# Database — PostgreSQL with schema isolation.
+# DATABASE_URL (postgres://user:password@host:5432/name?sslmode=require) wins when set, e.g. the string a
+# managed database hands out; otherwise the DB_* variables are used. DB_SCHEMA is the schema the tables
+# live in; `manage.py bootstrap` creates it when missing.
+DB_SCHEMA = env("DB_SCHEMA", default="qip")
+
+
+def database_config(env, schema):
+    """Return DATABASES["default"] built from the environment.
+
+    The schema's search_path is merged into libpq's ``options`` string next to whatever OPTIONS the URL
+    brought (sslmode, ...), so a managed database's TLS settings survive.
+    """
+    if env("DATABASE_URL", default=""):
+        config = env.db("DATABASE_URL")
+        if "postgresql" not in config.get("ENGINE", ""):
+            raise ImproperlyConfigured("DATABASE_URL must be a postgres:// URL")
+    else:
+        config = {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": env("DB_NAME", default="qm_center"),
+            "USER": env("DB_USER", default="qm_admin"),
+            "PASSWORD": env("DB_PASSWORD", default=""),
+            "HOST": env("DB_HOST", default="localhost"),
+            "PORT": env("DB_PORT", default="5432"),
+        }
+
+    options = dict(config.get("OPTIONS", {}))
+    search_path = f"-c search_path={schema},public"
+    options["options"] = f"{options['options']} {search_path}" if options.get("options") else search_path
+    # Give up on an unreachable server after this many seconds (libpq connect_timeout) instead of waiting for the
+    # operating system's TCP timeout, which is about two minutes per attempt: `manage.py bootstrap` retries
+    # while the database is still starting. 0 waits for ever. A connect_timeout inside DATABASE_URL wins.
+    options.setdefault("connect_timeout", env.int("DB_CONNECT_TIMEOUT", default=5))
+    config["OPTIONS"] = options
+
+    # Keep a connection for this many seconds instead of reconnecting per request; the health check
+    # makes Django test a reused connection before the request uses it (a restarted or failed-over
+    # database is noticed at once instead of surfacing as a 500).
+    config["CONN_MAX_AGE"] = env.int("DB_CONN_MAX_AGE", default=60)
+    config["CONN_HEALTH_CHECKS"] = True
+    return config
+
+
+DATABASES = {"default": database_config(env, DB_SCHEMA)}
 
 # Cache — Redis when REDIS_URL is set. Empty or unset: per-process memory (LocMem), which is fine for one
 # process (and for tests) but keeps separate counters per worker, so give a multi-worker deployment a Redis.
@@ -115,14 +147,6 @@ else:
             "LOCATION": "qip-default",
         }
     }
-
-# Celery
-CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://localhost:6379/2")
-CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="redis://localhost:6379/3")
-CELERY_TASK_SERIALIZER = "json"
-CELERY_RESULT_SERIALIZER = "json"
-CELERY_ACCEPT_CONTENT = ["json"]
-CELERY_TIMEZONE = "Asia/Taipei"
 
 # Internationalization
 LANGUAGE_CODE = "zh-hant"
@@ -153,16 +177,10 @@ REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "apps.accounts.exceptions.exception_handler",
 }
 
-# CORS — allow Next.js frontend
-CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-])
-# 開發時允許 Claude preview 的 autoPort 區段
-CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^http://localhost:\d+$",
-    r"^http://127\.0\.0\.1:\d+$",
-]
+# CORS — the browser only talks to Next.js, which proxies /api/* to Django (same origin), so by default
+# no other origin is allowed. List extra origins in CORS_ALLOWED_ORIGINS (comma separated); the localhost
+# defaults for local development live in dev.py.
+CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
 CORS_ALLOW_CREDENTIALS = True
 # 讓前端 JS 能讀到 Content-Disposition（匯出檔案下載要從 header 取檔名）
 CORS_EXPOSE_HEADERS = ["Content-Disposition"]
@@ -180,12 +198,10 @@ CSRF_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_HTTPONLY = False   # 前端需讀取 CSRF token
 # JSON 403 {"detail", "code": "csrf_failed"} instead of Django's HTML page.
 CSRF_FAILURE_VIEW = "apps.accounts.views.csrf_failure"
-CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:*",
-    "http://127.0.0.1:*",
-])
+# Origins (scheme included, e.g. https://qip.example.org) allowed to POST although they differ from the host
+# Django sees. Behind the Next proxy the public origin is X-Forwarded-Host, so it normally matches without
+# being listed; list it anyway when the platform rewrites Host or the scheme. Empty by default.
+CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 
 # ── Login protection and password policy ────────────────────────────
 

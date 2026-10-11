@@ -1,0 +1,59 @@
+# Next.js frontend image (standalone output). Build context: the repository root.
+#
+#   docker build -f Dockerfile.web -t qip-web .
+#
+# Build arguments. next.config.mjs is evaluated by `next build` and its result (proxy target, timeout,
+# headers) is baked into the build, so changing any of these means building the image again; there is no
+# run-time switch.
+#   API_INTERNAL_URL      where the server-side /api/* proxy forwards: the Django service as seen from the
+#                         web container (compose: http://api:8000; elsewhere the service's internal address)
+#   API_PROXY_TIMEOUT_MS  how long the proxy waits for Django (imports and exports can be slow)
+#   NEXT_HSTS_SECONDS     Strict-Transport-Security max-age on every response; 0 sends no header
+#
+# NEXT_PUBLIC_API_URL must NOT be set anywhere: the browser always calls same-origin /api/*, and a baked-in
+# absolute API address would bypass the proxy (and its same-origin cookies).
+
+# ── deps: install node_modules exactly as package-lock.json says ─────────────
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# ── builder: next build, standalone output ───────────────────────────────────
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+ARG API_INTERNAL_URL=http://api:8000
+ARG API_PROXY_TIMEOUT_MS=120000
+ARG NEXT_HSTS_SECONDS=0
+ENV API_INTERNAL_URL=$API_INTERNAL_URL \
+    API_PROXY_TIMEOUT_MS=$API_PROXY_TIMEOUT_MS \
+    NEXT_HSTS_SECONDS=$NEXT_HSTS_SECONDS \
+    NEXT_OUTPUT=standalone \
+    NEXT_TELEMETRY_DISABLED=1
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+# The repository has no public/ directory (nothing is served from it, and spreadsheets must never be); the
+# runner stage copies one anyway, so make sure it exists. Whatever a future public/ holds ships as is.
+RUN mkdir -p public && npm run build
+
+# ── runner: just the standalone server, as an unprivileged user ──────────────
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    HOSTNAME=0.0.0.0 \
+    PORT=3000
+
+RUN addgroup -S -g 10001 nextjs && adduser -S -u 10001 -G nextjs nextjs
+
+COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nextjs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nextjs /app/public ./public
+
+USER nextjs
+EXPOSE 3000
+
+CMD ["node", "server.js"]

@@ -109,7 +109,7 @@
 
 ### 14. 效能
 - [ ] 儀表板 `/api/v1/dashboard/` 快取（redis）
-- [ ] Indicator.PATCH 後的 `_refresh_indicator_alerts()` 改非同步（celery）
+- [ ] Indicator.PATCH 後的 `_refresh_indicator_alerts()` 改非同步（需要時再引入任務佇列；celery 已於 P7 自 requirements 移除）
 - [ ] 大量匯入改用 `bulk_create` + `update_fields`
 
 ---

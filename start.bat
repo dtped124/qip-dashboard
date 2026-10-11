@@ -8,8 +8,6 @@ echo ============================================
 echo.
 
 echo [0/4] Cleaning up stale processes...
-REM 停掉可能衝突的 backend/docker-compose 容器
-docker-compose -f backend\docker-compose.yml down >nul 2>&1
 REM 殺掉殘留的 node 進程（避免 port 3000 衝突）
 taskkill /f /im node.exe >nul 2>&1
 
@@ -20,14 +18,19 @@ echo [2/4] Waiting for database to be ready...
 timeout /t 8 /nobreak >nul
 
 echo [3/4] Running migrations and seeding data...
+REM Once the api image is rebuilt (docker-compose build api), its entrypoint runs "manage.py bootstrap" on every
+REM start - wait for the database, create the schema, migrate, seed with --only-missing - and the commands below
+REM find nothing left to do. They stay for the image that is running today, which has no entrypoint yet.
 docker-compose exec api python manage.py migrate --noinput
 REM seed_admin needs the initial admin password in the SEED_ADMIN_PASSWORD environment variable.
 REM Set it in this console before running the script, with quotes:  set "SEED_ADMIN_PASSWORD=..."
 REM and keep & ^ % ! out of the password (cmd treats them specially). It is NOT stored in the repo
 REM and never printed. -e with the name only forwards the value untouched; if unset nothing is forwarded.
 docker-compose exec -e SEED_ADMIN_PASSWORD api python manage.py seed_admin
-docker-compose exec api python manage.py seed_entry_base
-docker-compose exec api python manage.py seed_indicators
+REM --only-missing adds what is missing and leaves what an administrator changed alone (names, targets, indicators
+REM that were switched off); without it every start would overwrite those changes.
+docker-compose exec api python manage.py seed_entry_base --only-missing
+docker-compose exec api python manage.py seed_indicators --only-missing
 echo.
 echo [4/4] Building frontend (production mode) and starting...
 echo       (First build takes a few minutes; please wait)

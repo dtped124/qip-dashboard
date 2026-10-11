@@ -33,7 +33,11 @@ services:
       retries: 5
 
   api:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        # pytest and ruff for `docker compose exec api pytest`; the production image leaves them out
+        INSTALL_DEV: "1"
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - ./backend:/app
@@ -56,10 +60,8 @@ services:
       DB_PORT: "5432"
       DB_SCHEMA: qip
       REDIS_URL: redis://redis:6379/1
-      CELERY_BROKER_URL: redis://redis:6379/2
-      CELERY_RESULT_BACKEND: redis://redis:6379/3
-      # Initial password for `manage.py seed_admin` (start.bat). Intentionally no default:
-      # the admin account is only created/reset when you provide one.
+      # Initial password for `manage.py seed_admin` (start.bat, and the container's bootstrap on start-up).
+      # Intentionally no default: the admin account is only created/reset when you provide one.
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
 
 volumes:

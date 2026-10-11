@@ -32,7 +32,7 @@ cd backend
 python -m venv venv
 venv\Scripts\activate          # Windows
 # source venv/bin/activate    # macOS/Linux
-pip install -r requirements.txt
+pip install -r requirements-dev.txt    # 應用程式的相依（requirements.txt）加 pytest、ruff
 python manage.py migrate
 python manage.py createsuperuser
 python manage.py runserver    # http://localhost:8000
@@ -40,12 +40,16 @@ python manage.py runserver    # http://localhost:8000
 
 #### 後端（Docker，PostgreSQL）
 ```bash
-cd backend
-docker compose up -d
-# 初次啟動會執行 init-db.sql 建立 qip schema
-docker compose exec web python manage.py migrate
-docker compose exec web python manage.py createsuperuser
+# 於專案根目錄：postgres 5433、redis 6380、api 8001（原始碼 bind mount，存檔自動重載）
+docker compose up -d --build
+# api 容器每次啟動都先跑 bootstrap：等資料庫 → 建 qip schema → migrate → seed（--only-missing）
+# → 有設 SEED_ADMIN_PASSWORD 才建立 admin。進度看 log：
+docker compose logs -f api
+docker compose exec api python manage.py <指令>
 ```
+Windows 可直接執行 `start.bat`（後端容器＋前端）。映像的相依套件（`backend/requirements.txt`）有變動時要重建：`docker compose build api`。
+開發 compose 以 build 引數 `INSTALL_DEV=1` 建映像，所以容器裡有 pytest、ruff（`backend/requirements-dev.txt`）；正式映像不傳這個引數，不含它們。
+根目錄的 `.env`（有的話）是開發堆疊的檔案——Compose 會自動讀它來內插 `DB_USER`、`DB_PASSWORD`、`SEED_ADMIN_PASSWORD`；正式堆疊用的是 `.env.prod`，兩者互不共用（見 [DEPLOYMENT.md](DEPLOYMENT.md) §1）。
 
 ### 初始帳號與密碼
 - **帳號**：員工編號（`employee_id`），如 `admin` 或 `10001`
@@ -338,48 +342,51 @@ npm run test:unit    # node --test lib/auth/*.test.ts：角色／路由政策（
 
 ## 🚀 部署
 
-### Docker Compose（生產）
+完整說明（本機 production 試跑、必填環境變數、啟動程序、平台待辦）在 [DEPLOYMENT.md](DEPLOYMENT.md)。重點：
+
+### Docker Compose（正式環境樣板）
 ```bash
-cd backend
-docker compose -f docker-compose.prod.yml up -d
+# 於專案根目錄；先 cp .env.prod.example .env.prod 並填值（不是 .env：那是開發堆疊的檔案）
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 ```
 
-設定：
-- `DJANGO_SETTINGS_MODULE=config.settings.prod`
-- `DB_HOST`、`DB_PASSWORD`、`SECRET_KEY` 走環境變數
-- `ALLOWED_HOSTS` 含部署網域
-- nginx 反向代理到 `8000`，靜態檔案從 `STATIC_ROOT` 提供
+- 四個服務：`db`、`redis`、`api`（`backend/Dockerfile`，Django + gunicorn）、`web`（`Dockerfile.web`，Next.js standalone）；只有 `web` 對外發佈 port（預設綁 `0.0.0.0`，`WEB_BIND` 可改）。
+- project 名稱是 `qip-prod`（檔案頂層的 `name:`），開發堆疊是 `qip-dashboard`：容器、volume、網路各自獨立，同一台機器可以同時存在；唯一會撞的是埠（`WEB_PORT` 預設 3000，和 `npm run dev` 一樣）。
+- `DJANGO_SETTINGS_MODULE=config.settings.prod` 是映像的預設；`DJANGO_SECRET_KEY`、`DJANGO_ALLOWED_HOSTS`、資料庫連線、`SEED_ADMIN_PASSWORD` 走環境變數（prod 沒設 `DJANGO_ALLOWED_HOSTS` 會拒絕啟動；`DJANGO_SECRET_KEY` 空的、不足 50 字元或還是範本／開發用的值也會拒絕）。
+- 靜態檔由 WhiteNoise 提供；TLS、網域、限流在平台邊緣（見 DEPLOYMENT.md §7）。
 
 ### 前端 Next.js
 ```bash
 npm run build
-npm start               # SSR 模式
+npm start               # SSR 模式（本機）
 # 或 Portable
 STATIC_EXPORT=true npm run build   # → out/
+# 容器：docker build -f Dockerfile.web -t qip-web .   （NEXT_OUTPUT=standalone；API_INTERNAL_URL 等在 build 時固化）
 ```
 
 ### 資料庫遷移
 ```bash
-docker compose exec web python manage.py makemigrations
-docker compose exec web python manage.py migrate
+docker compose exec api python manage.py makemigrations
+docker compose exec api python manage.py migrate
 ```
 
 ### 初始化
-1. `python manage.py migrate`
-2. `python manage.py loaddata initial_indicators.json`（若有預設資料）
-3. `python manage.py createsuperuser`
-4. 前往 `/settings/tcpi` 匯入 TCPI 標竿
+容器啟動時的 `manage.py bootstrap` 會自動做：建 `qip` schema → `migrate` → `seed_entry_base --only-missing`、`seed_indicators --only-missing` → （有 `SEED_ADMIN_PASSWORD` 才）`seed_admin`。手動操作：
+1. `python manage.py bootstrap`（可重複執行）
+2. 前往 `/settings/tcpi` 匯入 TCPI 標竿
 
 ---
 
 ## 🐛 除錯
 
 ### 資料庫連線錯誤
-- PostgreSQL schema `qip` 是否存在？→ 跑 `init-db.sql`
-- `DB_HOST` 在 docker 內應為 `db`，外部為 `localhost`
+- PostgreSQL schema `qip` 是否存在？→ `python manage.py bootstrap` 會建立（開發用 postgres 容器另會執行 `init-db.sql`）
+- `DB_HOST`：開發 compose 內是 `postgres`，`docker-compose.prod.yml` 內是 `db`，主機上直接跑 `manage.py` 則是 `localhost`（埠 5433）
+- 有設 `DATABASE_URL` 時它蓋過 `DB_*`
 
 ### CORS
-- dev 環境允許 `localhost:3000`，見 `config/settings/dev.py::CORS_ALLOWED_ORIGINS`
+- dev 環境允許 `localhost:3000` 與任何 localhost 埠，見 `config/settings/dev.py`（`CORS_ALLOWED_ORIGINS`、`CORS_ALLOWED_ORIGIN_REGEXES`）
+- prod 預設不允許任何跨來源：瀏覽器只連 Next，`/api/*` 由 Next 轉給 Django（同源），不需要 CORS
 - 若 cookie 跨域，需設 `CORS_ALLOW_CREDENTIALS = True`
 
 ### CSRF 失敗
@@ -403,6 +410,8 @@ STATIC_EXPORT=true npm run build
 
 # 後端 Docker image
 docker build -t qip-backend:v2.x backend/
+# 前端 Docker image（standalone）
+docker build -f Dockerfile.web -t qip-web:v2.x .
 ```
 
 ### 資料庫遷移腳本
