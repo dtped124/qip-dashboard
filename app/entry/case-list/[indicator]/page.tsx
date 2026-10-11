@@ -213,6 +213,8 @@ export default function CaseListPage() {
   if (!data) return null
 
   const { summary, records } = data
+  const backHref =
+    `/entry/${indicatorCode.split('-')[0]}` + (campus ? `?campus=${encodeURIComponent(campus)}` : '')
 
   const filteredRecords = records.filter((r) => {
     if (filter === 'numerator') return r.case_role === 'numerator'
@@ -224,7 +226,8 @@ export default function CaseListPage() {
     <div>
       <header className="bg-white border-b px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Link href={`/entry/${indicatorCode.split('-')[0]}`} className="text-gray-400 hover:text-gray-600 text-sm">
+          {/* The form needs the campus: a category with several campuses answers 400 campus_required without it. */}
+          <Link href={backHref} className="text-gray-400 hover:text-gray-600 text-sm">
             ← 返回
           </Link>
           <div>

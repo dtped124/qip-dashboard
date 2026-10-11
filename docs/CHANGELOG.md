@@ -1,5 +1,50 @@
 # 更新日誌 (CHANGELOG)
 
+## 雲端化 P6 — 欄位級指派：前端（2026-10-11，`feat/field-assignment-ui`）
+
+只動前端與文件；後端是 P5。目的：讓前端跟上 P5 的後端把關——以前每次存檔都把整個面向所有指標整包送回（現在會被 400 `field_not_assigned` 擋）、不帶院區（多院區時 400 `campus_required`）、看不出哪個欄位是別人負責的、送審缺漏看不到負責人。
+
+### ✨ 新功能 / 改進
+- **只送「自己負責、而且改過」的欄位**（新增 `lib/entry/draft.ts`，純函式）：`buildDraftEntries(formValues, baseline, indicators)` 只輸出 `editable_fields` 內、數字與 baseline（載入時或上次存檔成功時伺服器的值）不同的 key；清空是 `null`；`note` 只在使用者改過才送（它是兩位負責人共用的一欄）；HA10-01 新竹的分子以 `sub_entries` 送（任一子項有改才送、送完整 13 筆，不送單獨的 `numerator`，否則後端 400）；沒有任何改動的指標不送，整份都沒改就不呼叫 API（也就不會建立空的月報）。`applyServerEntries(formValues, entries, baseline?)` 把存檔回應的最新值（回應只含這次存檔的指標，含該指標上他人剛填的欄位）合併回表單，使用者在請求飛行中又打的內容不會被覆蓋，與伺服器數字相同的輸入維持使用者打的樣子（「5.」、「5.10」不會在游標下被改寫）。取代 `lib/entry/api.ts` 的 `formValuesToDraftEntries`
+- **院區一律明確**：`getEntryForm` / `saveDraft` / `submitCategory` 帶 `campus`（網址的 `?campus=`；沒有就用表單回應裡的院區）。沒帶 `campus` 時照樣送出，單一院區後端自己會用；多院區回 400 `campus_required`，畫面改成「請選擇院區」（從 `my-tasks` 列出該面向的院區），沒有任何院區時顯示說明並導回 `/entry`
+- **我的任務 `/entry`**：一列是一個「院區 × 面向」（`key` 與連結都帶院區，不再互相蓋掉），多院區時院區用色塊標示；進度改用 `my_filled / my_total`（我負責的欄位數），並顯示「待他人填寫 n」（`category_missing − (my_total − my_filled)`）；退回通知帶院區、連結帶 `?campus=`；`approved` 也視為鎖定（與 KD1 一致）
+- **填報表單 `/entry/[category]`**：分子、分母各依 `editable_fields`——不是自己負責的欄位唯讀（灰底）並標「由 王小明 填寫」（沒有負責人「未指派」），欄位旁小字顯示填報人與時間（「王小明 10/11 14:32」，台北時間）；HA10-01 新竹的子項依分子權限唯讀／可編，加總隨輸入即時更新；備註只要有任一欄位的權限就能編，鎖定時有內容仍顯示；個案清單列的連結補 `?campus=&year=&month=` 並改用站內導頁；`locked` 改用後端的 `report.locked`。存檔成功後以回應更新他人欄位與「填報人」小字，並把 baseline 設為已送出的值；403 `report_locked` → 重新載入成唯讀並提示。送審：先暫存再送審，400 `incomplete` 在畫面上方列出缺漏，每項「HA03-01 住院死亡率 — 分母（王小明）」，沒有負責人則「（未指派）」；成功後 1.5 秒導回 `/entry`
+- **送審前檢查**（`lib/entry/validation.ts`）：必填只針對 `editable_fields`；他人（或沒人）負責的欄位還是空的只給 warning、不擋按鈕，最終由後端判定；個案清單指標沒有數值也只是 warning
+- **指派頁 `/entry/admin/indicatorassignment`**：新增「負責欄位」欄（分子＋分母／僅分子／僅分母）與「覆蓋情況」欄，每個指標 × 院區顯示「分子：王小明｜分母：未指派」，缺人負責的欄位用橘色標出（從全部指派計算，搜尋人名不會讓另一位負責人的欄位看起來沒人負責），並加「欄位未覆蓋」統計卡；新增對話框加「負責欄位」radio（預設分子＋分母），`has_denominator=false` 的指標只能選分子＋分母並說明「此指標無分母」，個案清單指標提示「個案清單指標，表單唯讀」；批次指派的去重改為 指標 × 院區 × 人員 × 欄位（與後端同一個重疊規則：`both` 與任何欄位都重疊），逐項呼叫後端，失敗的項目依原因歸類列出（後端 400 的全部訊息，不只第一則）並刷新表格，已建立的不會重複。`IndicatorMetaResponse` 補上 `has_denominator`、`entry_mode`（後端 P5 已回傳）
+- **審核明細**：分子、分母旁各顯示填報人與時間（`numerator_filled_by/at`、`denominator_filled_by/at`）；新竹 HA10-01 的分子顯示「由子項加總」並停用行內修改（後端會回 400 `field_not_editable`）
+- 個案清單頁的「返回」帶 `?campus=`（否則多院區的面向會 400 `campus_required`）
+- `npm run test:unit` 同時跑 `lib/auth/*.test.ts` 與 `lib/entry/*.test.ts`
+
+### 🐛 修正
+- **自動暫存存到的是上一次輸入之前的值**：`triggerAutoSave` 的 `useCallback` 與其中的 `doSave` 是舊 render 的閉包，3 秒後送出的 `formValues` 不含最後幾次按鍵。現在 `formValues`／baseline／表單資料放在 `useRef`，存檔與送審都從 ref 讀最新值，並以佇列依序執行（暫存、手動暫存、送審不會交錯）
+- 離開頁面（或切換院區）時還沒送出的修改會先存一次；送審成功後的導頁計時器離頁時會清掉
+- HA10-01 新竹：加總以前只在重新載入後才更新，送審驗證用到的是載入時的分子，填完 13 個子項仍可能被「送審前必須填寫數值」擋住
+
+### ⚠️ 已知限制 / 後端缺口
+- 審核頁行內修改維持原狀：只有 `approved` 才出現修改入口，且只能改分子（後端在 `submitted`／`approved` 都允許，也允許改分母）
+- `GET /api/entry/form` 沒有回 `exclusion_count`，個案清單列的「(排除n)」永遠不顯示（型別有欄位、後端沒給）
+- `docs/API_REFERENCE.md`：`GET /api/review/detail` 一行說明沒有列出逐欄的四個填報人欄位（後端有回）；`POST /api/case-list/review-exclusion` 文件寫 `case_id`，後端與前端實際用 `case_record_id`
+- 填報頁不支援 `year`／`month` 查詢參數（一律當月），個案清單頁的「返回」因此只帶 `campus`
+- 沒有前端元件測試框架：表單頁、指派頁、審核頁只經 `tsc`、`next lint` 與瀏覽器渲染確認，純邏輯（`draft.ts`、`validation.ts`、`assignments.ts`）有 `node --test`
+
+### 📁 修改檔案
+| 檔案 | 修改內容 |
+|------|---------|
+| `lib/entry/draft.ts`、`draft.test.ts`（新） | `buildDraftEntries`、`applyServerEntries`、`buildInitialValues`、`mergeSavedIntoIndicators`、`sumSubEntries`、`parseNum`；單元測試 |
+| `lib/entry/assignments.ts`、`assignments.test.ts`（新） | 欄位重疊規則、覆蓋情況、指派錯誤訊息整理；單元測試 |
+| `lib/entry/validation.ts`、`validation.test.ts`（新） | 必填只看 `editable_fields`、他人欄位 warning、`ownersLabel`／`filledStamp`／`missingLabel`／`parseMissing`／`usesSubEntries`；單元測試 |
+| `lib/entry/types.ts`、`lib/entry/api.ts`、`lib/api.ts` | `CategoryTask`／`RejectionNotice` 院區與進度欄位、`IndicatorFormItem` 欄位權限與填報人、`report.locked`／`id: number \| null`、`field`、`SavedEntry`、`MissingField`／`SubmitIncompleteBody`；form／save／submit 帶 `campus`；審核型別四個填報人欄位；指標清單型別補 `has_denominator`／`entry_mode` |
+| `app/entry/page.tsx` | 院區 × 面向列、`my_filled/my_total`、待他人填寫 |
+| `app/entry/[category]/page.tsx`、`components/entry/IndicatorRow.tsx` | 院區、ref 版自動暫存、存檔合併、送審缺漏、唯讀欄位與填報人 |
+| `app/entry/admin/indicatorassignment/page.tsx` | 負責欄位、覆蓋情況、批次去重與錯誤顯示 |
+| `app/entry/review/campus/[campus]/[category]/page.tsx`、`app/entry/case-list/[indicator]/page.tsx` | 填報人顯示與 HA10 子項加總；返回帶院區 |
+| `package.json`、`docs/USER_MANUAL.md`、`docs/CHANGELOG.md` | `test:unit` 範圍；11.5「分子／分母分派」與 11.1、11.2、14.2 的相應段落 |
+
+### ✅ 測試
+- `npm run test:unit`：126 條（既有 58 條 + `lib/entry` 68 條）全綠；`npx tsc --noEmit` 零錯誤；`npx next lint` 無錯誤（仍是既有的 3 個 exhaustive-deps 警告）
+
+---
+
 ## 雲端化 P5 — 欄位級指派：後端（2026-10-11，`feat/field-assignment-api`）
 
 只動後端；前端是 P6。回應結構以「新增欄位」為主，但**不是完全向下相容**：舊前端會碰到的差異逐項列在「破壞點」，完整對照表在 `docs/API_REFERENCE.md` 的「與 P5 之前的差異」。

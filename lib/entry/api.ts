@@ -9,8 +9,8 @@ import type {
   Campus,
   DeadlineSetting,
   DeadlineSettingPayload,
+  DraftEntry,
   EntryFormResponse,
-  FormValue,
   IndicatorAssignment,
   MyTasksResponse,
   ResetPasswordResponse,
@@ -134,27 +134,29 @@ export async function getMyTasks(year: number, month: number): Promise<MyTasksRe
   )
 }
 
+/**
+ * GET /api/entry/form. `campus` (the campus code) names the campus x category to fill; the backend no longer
+ * falls back to the user's own campus: without it a single-campus category is used, several give 400 `campus_required`.
+ */
 export async function getEntryForm(
   year: number,
   month: number,
-  categoryCode: string
+  categoryCode: string,
+  campus?: string
 ): Promise<EntryFormResponse> {
-  return apiFetch<EntryFormResponse>(
-    `/api/entry/form?year=${year}&month=${month}&category=${categoryCode}`
-  )
+  const params = new URLSearchParams({ year: String(year), month: String(month), category: categoryCode })
+  if (campus) params.set('campus', campus)
+  return apiFetch<EntryFormResponse>(`/api/entry/form?${params.toString()}`)
 }
 
 export interface DraftPayload {
   year: number
   month: number
   category: string
-  entries: Array<{
-    indicator_code: string
-    numerator: number | null
-    denominator: number | null
-    note: string
-    sub_entries?: Array<{ sub_code: string; sub_name: string; value: number | null }>
-  }>
+  /** Campus code; sent whenever it is known (see getEntryForm). */
+  campus?: string
+  /** Only what changed - build it with buildDraftEntries (lib/entry/draft.ts). */
+  entries: DraftEntry[]
 }
 
 export async function saveDraft(payload: DraftPayload): Promise<SaveDraftResponse> {
@@ -164,14 +166,19 @@ export async function saveDraft(payload: DraftPayload): Promise<SaveDraftRespons
   })
 }
 
+/**
+ * POST /api/entry/submit. A report with required fields still empty (anybody's, not just the submitter's) is
+ * refused with 400 `incomplete`; the ApiError's `data` then has the `missing` list (see parseMissing).
+ */
 export async function submitCategory(
   year: number,
   month: number,
-  category: string
+  category: string,
+  campus?: string
 ): Promise<SubmitResponse> {
   return apiFetch<SubmitResponse>('/api/entry/submit', {
     method: 'POST',
-    json: { year, month, category },
+    json: campus ? { year, month, category, campus } : { year, month, category },
   })
 }
 
@@ -307,6 +314,11 @@ export interface ReviewIndicatorRow {
   data_source: string
   filled_by: string | null
   filled_at: string | null
+  /** Who filled each number and when (ISO time); null = never filled. A reviewer's edit does not change these. */
+  numerator_filled_by: string | null
+  numerator_filled_at: string | null
+  denominator_filled_by: string | null
+  denominator_filled_at: string | null
   prev_value: number | null
   change_pct: number | null
   is_anomaly: boolean
@@ -367,41 +379,4 @@ export interface ExclusionReason {
   code: string
   name: string
   description: string
-}
-
-// ─── 輔助：將 FormValues 轉成 DraftPayload.entries ─────────────
-
-export function formValuesToDraftEntries(
-  formValues: Record<string, FormValue>,
-  indicators: Array<{
-    indicator_code: string
-    has_denominator: boolean
-    is_ha10_hsinchu: boolean
-    sub_entries: Array<{ sub_code: string; sub_name: string }>
-  }>
-): DraftPayload['entries'] {
-  return indicators.map((ind) => {
-    const fv = formValues[ind.indicator_code]
-    const parseNum = (s: string) => {
-      const n = parseFloat(s)
-      return isNaN(n) ? null : n
-    }
-
-    const entry: DraftPayload['entries'][0] = {
-      indicator_code: ind.indicator_code,
-      numerator: parseNum(fv?.numerator ?? ''),
-      denominator: ind.has_denominator ? parseNum(fv?.denominator ?? '') : null,
-      note: fv?.note ?? '',
-    }
-
-    if (ind.is_ha10_hsinchu) {
-      entry.sub_entries = ind.sub_entries.map((sub) => ({
-        sub_code: sub.sub_code,
-        sub_name: sub.sub_name,
-        value: parseNum(fv?.sub_entries?.[sub.sub_code] ?? ''),
-      }))
-    }
-
-    return entry
-  })
 }

@@ -14,7 +14,7 @@ import {
   rejectCategory,
 } from '@/lib/entry/api'
 import type { ReviewDetailResponse, ReviewIndicatorRow } from '@/lib/entry/api'
-import { formatChangePct, formatValue } from '@/lib/entry/validation'
+import { filledStamp, formatChangePct, formatValue, usesSubEntries } from '@/lib/entry/validation'
 
 // ─── 行內編輯元件 ─────────────────────────────────────────────
 
@@ -104,14 +104,29 @@ function InlineEditCell({
 
 // ─── 指標列 ─────────────────────────────────────────────────
 
+/** Who filled a number and when, in small print under it; nothing when nobody has. */
+function FilledStamp({ by, at }: { by: string | null; at: string | null }) {
+  const stamp = filledStamp(by, at)
+  if (!stamp) return null
+  return (
+    <div className="text-[11px] leading-tight text-gray-400 font-normal" title="填報人與時間">
+      {stamp}
+    </div>
+  )
+}
+
 function ReviewIndicatorRow({
-  ind, isApproved, onEdited,
+  ind, campusCode, isApproved, onEdited,
 }: {
   ind: ReviewIndicatorRow
+  campusCode: string
   isApproved: boolean
   onEdited: () => void
 }) {
   const { text: changeText, color: changeColor } = formatChangePct(ind.change_pct)
+  // HA10-01 at Hsinchu: the numerator is the sum of 13 sub-categories; the backend refuses a direct edit
+  // (400 field_not_editable), so the cell is not offered for editing at all.
+  const numeratorFromSubs = usesSubEntries(ind.indicator_code, campusCode)
 
   return (
     <>
@@ -126,7 +141,7 @@ function ReviewIndicatorRow({
           )}
         </td>
         <td className="px-3 py-2 text-right text-sm">
-          {isApproved ? (
+          {isApproved && !numeratorFromSubs ? (
             <InlineEditCell
               entryId={ind.entry_id}
               field="numerator"
@@ -139,9 +154,21 @@ function ReviewIndicatorRow({
           {ind.entry_mode === 'case_list' && ind.exclusion_count > 0 && (
             <span className="ml-1 text-xs text-gray-400">(-{ind.exclusion_count})</span>
           )}
+          {numeratorFromSubs && (
+            <div
+              className="text-[11px] leading-tight text-blue-600"
+              title="分子是 13 類子項的加總，不能直接修改；請退回給填報者修正子項"
+            >
+              由子項加總
+            </div>
+          )}
+          <FilledStamp by={ind.numerator_filled_by} at={ind.numerator_filled_at} />
         </td>
         <td className="px-3 py-2 text-right text-sm text-gray-500">
           {ind.has_denominator ? (ind.denominator ?? '—') : 'N/A'}
+          {ind.has_denominator && (
+            <FilledStamp by={ind.denominator_filled_by} at={ind.denominator_filled_at} />
+          )}
         </td>
         <td className="px-3 py-2 text-right text-sm font-medium">
           {ind.value !== null ? formatValue(ind.value, ind.unit) : '—'}
@@ -262,8 +289,7 @@ export default function ReviewDetailPage() {
                 審核：{campus.name} · {category.name} · {year}年{month}月
               </h1>
               <p className="text-xs text-gray-500">
-                填報者：{report.submitted_by ?? '—'} ·
-                送審時間：{report.submitted_at?.slice(0, 16) ?? '—'}
+                送審者／時間：{filledStamp(report.submitted_by, report.submitted_at) || '—'}
                 {report.is_late && <span className="ml-2 text-amber-600">⏰ 逾期</span>}
               </p>
             </div>
@@ -339,8 +365,8 @@ export default function ReviewDetailPage() {
               <tr className="text-xs text-gray-500">
                 <th className="px-3 py-2 text-left font-medium">代碼</th>
                 <th className="px-3 py-2 text-left font-medium">指標名稱</th>
-                <th className="px-3 py-2 text-right font-medium w-24">分子</th>
-                <th className="px-3 py-2 text-right font-medium w-24">分母</th>
+                <th className="px-3 py-2 text-right font-medium w-32">分子</th>
+                <th className="px-3 py-2 text-right font-medium w-32">分母</th>
                 <th className="px-3 py-2 text-right font-medium w-20">比率</th>
                 <th className="px-3 py-2 text-right font-medium w-20">上月值</th>
                 <th className="px-3 py-2 text-right font-medium w-16">變動</th>
@@ -351,6 +377,7 @@ export default function ReviewDetailPage() {
                 <ReviewIndicatorRow
                   key={ind.indicator_code}
                   ind={ind}
+                  campusCode={campus.code}
                   isApproved={isApproved}
                   onEdited={load}
                 />

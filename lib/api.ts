@@ -325,6 +325,10 @@ export interface IndicatorMetaResponse {
   description: string;
   target_mode: boolean;
   target_value: number | null;
+  /** Entry system: false = a plain count (the numerator is the value, no denominator can be assigned). */
+  has_denominator: boolean;
+  /** Entry system: 'manual' (typed into the form) or 'case_list' (numbers come from the case-list pages). */
+  entry_mode: string;
 }
 
 export interface IndicatorTargetState {

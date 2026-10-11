@@ -45,17 +45,17 @@ function RejectionBanner({ notices }: { notices: RejectionNotice[] }) {
     <div className="mb-4 space-y-2">
       {notices.map((n) => (
         <div
-          key={n.category_code}
+          key={`${n.campus_code}:${n.category_code}`}
           className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start justify-between gap-3"
         >
           <div>
             <p className="text-sm font-medium text-red-800">
-              ⚠️ <strong>{n.category_name}</strong> 面向已被退回
+              ⚠️ <strong>{n.campus_name} · {n.category_name}</strong> 面向已被退回
             </p>
             <p className="text-sm text-red-600 mt-0.5">理由：{n.reason}</p>
           </div>
           <Link
-            href={`/entry/${n.category_code}?status=rejected`}
+            href={`/entry/${n.category_code}?campus=${encodeURIComponent(n.campus_code)}&status=rejected`}
             className="shrink-0 text-sm text-red-700 font-medium hover:underline"
           >
             前往修改 →
@@ -92,13 +92,35 @@ function DeadlineBanner({ daysRemaining, twDeadlineDate, isOverdue }: {
   return null
 }
 
-function CategoryRow({ task }: { task: CategoryTask }) {
-  const isLocked = task.status === 'submitted' || task.status === 'finalized'
+/** A campus label; loud when the user has tasks in more than one campus, because the rows then look alike. */
+function CampusTag({ name, emphasized }: { name: string; emphasized: boolean }) {
+  return (
+    <span
+      className={
+        emphasized
+          ? 'px-1.5 py-0.5 rounded text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200'
+          : 'text-xs text-gray-500'
+      }
+    >
+      {name}
+    </span>
+  )
+}
+
+/** Required fields of the whole campus x category still empty that are not mine (somebody else's, or nobody's). */
+function othersPendingCount(task: CategoryTask): number {
+  return Math.max(0, task.category_missing - (task.my_total - task.my_filled))
+}
+
+function CategoryRow({ task, multiCampus }: { task: CategoryTask; multiCampus: boolean }) {
+  // Submitted, approved and finalized reports are locked for the reporter (KD1).
+  const isLocked = task.status === 'submitted' || task.status === 'approved' || task.status === 'finalized'
   const hasRejection = task.rejection_reason !== ''
+  const pendingOthers = othersPendingCount(task)
 
   return (
     <Link
-      href={isLocked ? '#' : `/entry/${task.category_code}`}
+      href={isLocked ? '#' : `/entry/${task.category_code}?campus=${encodeURIComponent(task.campus_code)}`}
       className={`block ${isLocked ? 'pointer-events-none opacity-70' : 'hover:bg-gray-50 cursor-pointer'}`}
     >
       <div className="flex items-center px-4 py-3 border-b last:border-b-0">
@@ -110,13 +132,24 @@ function CategoryRow({ task }: { task: CategoryTask }) {
 
         {/* 名稱 */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex flex-wrap items-center gap-2 mb-1">
             <span className="text-sm font-medium text-gray-800">{task.category_name}</span>
+            <CampusTag name={task.campus_name} emphasized={multiCampus} />
             {hasRejection && (
               <span className="text-xs text-red-600 font-medium">🔙 退回</span>
             )}
           </div>
-          <ProgressBar filled={task.filled_count} total={task.total_count} />
+          <div title={`我負責的欄位：已填 ${task.my_filled} / 共 ${task.my_total}`}>
+            <ProgressBar filled={task.my_filled} total={task.my_total} />
+          </div>
+          {pendingOthers > 0 && (
+            <p
+              className="mt-1 text-xs text-amber-600"
+              title="整個院區的這個面向還有必填欄位是空的，不是由你負責（他人負責或尚未指派）；要全部填齊才能送審"
+            >
+              待他人填寫 {pendingOthers}
+            </p>
+          )}
         </div>
 
         {/* 狀態 + 箭頭 */}
@@ -182,6 +215,7 @@ export default function EntryHomePage() {
   const overallPct = overall_progress.total === 0
     ? 0
     : Math.round((overall_progress.filled / overall_progress.total) * 100)
+  const multiCampus = new Set(categories.map((c) => c.campus_code)).size > 1
 
   return (
     <main className="max-w-2xl mx-auto p-4 space-y-4">
@@ -242,7 +276,11 @@ export default function EntryHomePage() {
           </div>
         ) : (
           categories.map((task) => (
-            <CategoryRow key={task.category_code} task={task} />
+            <CategoryRow
+              key={`${task.campus_code}:${task.category_code}`}
+              task={task}
+              multiCampus={multiCampus}
+            />
           ))
         )}
       </div>
