@@ -1,15 +1,152 @@
 /**
- * 填報即時驗證邏輯（§5.3）
+ * 填報即時驗證邏輯（§5.3）與欄位級指派的顯示輔助
  *
- * 硬性阻擋（error）：分子 > 分母、負數、送審時有空值
- * 柔性提醒（warning）：±30% 變動、分母為 0、數值為 0 但上月非 0
+ * 硬性阻擋（error）：分子 > 分母、負數、送審時自己負責的欄位有空值
+ * 柔性提醒（warning）：±30% 變動、分母為 0、數值為 0 但上月非 0、
+ *                      送審時他人負責的欄位還是空的（不擋按鈕，送審由後端最終判定）
+ *
+ * Pure functions with type-only imports, so `npm run test:unit` (node --test) can load this file.
  */
-import type { FormValue, FormValidations, IndicatorFormItem, ValidationResult } from './types'
+import type {
+  EntryField,
+  FormValue,
+  FormValidations,
+  IndicatorFormItem,
+  MissingField,
+  ValidationResult,
+} from './types'
 
 const SOFT_CHANGE_THRESHOLD = 30  // 柔性提醒：月變動 > 30%
 
+const OK: ValidationResult = { level: 'ok', message: '' }
+
+export const FIELD_LABEL: Record<EntryField, string> = { numerator: '分子', denominator: '分母' }
+
+// ─── 欄位級指派的顯示輔助 ──────────────────────────────────────
+
+/** Names of the people responsible for a field, or 未指派 when there is nobody. */
+export function ownersLabel(owners: readonly string[]): string {
+  return owners.length > 0 ? owners.join('、') : '未指派'
+}
+
+const STAMP_FORMAT = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Asia/Taipei',  // the hospital's clock, whatever the browser's time zone is
+  month: 'numeric',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+})
+
+/** An ISO time as "10/11 14:32" (Taipei time); '' for a missing or unreadable one. */
+export function formatStamp(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const part: Record<string, string> = {}
+  for (const p of STAMP_FORMAT.formatToParts(date)) part[p.type] = p.value
+  return `${part.month}/${part.day} ${part.hour}:${part.minute}`
+}
+
+/** "王小明 10/11 14:32"; '' when nobody has filled the field yet. */
+export function filledStamp(by: string | null | undefined, at: string | null | undefined): string {
+  if (!by) return ''
+  return `${by} ${formatStamp(at)}`.trim()
+}
+
+/** The one rule of which indicator is entered as 13 sub-categories (backend: services.values.uses_sub_entries). */
+export function usesSubEntries(indicatorCode: string, campusCode: string): boolean {
+  return indicatorCode === 'HA10-01' && campusCode === 'hsinchu'
+}
+
+/** "HA03-01 住院死亡率 — 分母（王小明）"; "（未指派）" when nobody is responsible for the field. */
+export function missingLabel(item: MissingField): string {
+  return `${item.indicator_code} ${item.indicator_name} — ${FIELD_LABEL[item.field]}（${ownersLabel(item.owners)}）`
+}
+
+/**
+ * The `missing` list of a 400 `incomplete` answer (ApiError.data of submit), or null when the body has none.
+ * Entries that are not shaped like a gap are dropped rather than trusted.
+ */
+export function parseMissing(data: unknown): MissingField[] | null {
+  if (typeof data !== 'object' || data === null) return null
+  const raw = (data as { missing?: unknown }).missing
+  if (!Array.isArray(raw)) return null
+  const items: MissingField[] = []
+  for (const r of raw) {
+    if (typeof r !== 'object' || r === null) continue
+    const m = r as Record<string, unknown>
+    if (typeof m.indicator_code !== 'string') continue
+    if (m.field !== 'numerator' && m.field !== 'denominator') continue
+    const owners = Array.isArray(m.owners) ? m.owners.filter((o): o is string => typeof o === 'string') : []
+    items.push({
+      indicator_code: m.indicator_code,
+      indicator_name: typeof m.indicator_name === 'string' ? m.indicator_name : m.indicator_code,
+      field: m.field,
+      owners,
+      unassigned: m.unassigned === true || owners.length === 0,
+      sub_codes: Array.isArray(m.sub_codes) ? m.sub_codes.filter((c): c is string => typeof c === 'string') : undefined,
+    })
+  }
+  return items
+}
+
+// ─── 驗證 ──────────────────────────────────────────────────────
+
+function allSubsFilled(indicator: IndicatorFormItem, fv: FormValue): boolean {
+  return indicator.sub_entries.every((sub) => (fv.sub_entries[sub.sub_code] ?? '').trim() !== '')
+}
+
+/** Whether a required field of the indicator is still empty in the form. */
+function isEmpty(indicator: IndicatorFormItem, fv: FormValue, field: EntryField): boolean {
+  if (field === 'denominator') return fv.denominator.trim() === ''
+  return indicator.is_ha10_hsinchu ? !allSubsFilled(indicator, fv) : fv.numerator.trim() === ''
+}
+
+/** The fields the indicator needs before it can be submitted (same rule as the backend's required_fields). */
+function requiredFields(indicator: IndicatorFormItem): EntryField[] {
+  return indicator.has_denominator ? ['numerator', 'denominator'] : ['numerator']
+}
+
+/** The hard error for a required field of mine that is empty at submit time, or null. */
+function ownFieldError(indicator: IndicatorFormItem, fv: FormValue): ValidationResult | null {
+  const mine = new Set(indicator.editable_fields)
+  const empty = requiredFields(indicator).filter((f) => mine.has(f) && isEmpty(indicator, fv, f))
+  if (empty.length === 0) return null
+  if (empty.includes('numerator') && indicator.is_ha10_hsinchu) {
+    return { level: 'error', message: '送審前所有子類別皆必須填寫' }
+  }
+  if (empty.length === 2) return { level: 'error', message: '送審前分子與分母皆必須填寫' }
+  if (empty[0] === 'denominator') return { level: 'error', message: '送審前分母必須填寫' }
+  return {
+    level: 'error',
+    message: indicator.has_denominator ? '送審前分子必須填寫' : '送審前必須填寫數值',
+  }
+}
+
+/**
+ * The warning for required fields that somebody else owns and that are still empty at submit time, or null.
+ * It never blocks: whether the report can be submitted is decided by the backend, which checks the whole campus.
+ */
+function othersPending(indicator: IndicatorFormItem, fv: FormValue): ValidationResult | null {
+  const mine = new Set(indicator.editable_fields)
+  const empty = requiredFields(indicator).filter((f) => !mine.has(f) && isEmpty(indicator, fv, f))
+  if (empty.length === 0) return null
+  if (indicator.entry_mode === 'case_list') {
+    return { level: 'warning', message: '個案清單指標：數值尚未產生（來自個案清單頁或匯入）' }
+  }
+  const parts = empty.map((f) => `${FIELD_LABEL[f]}尚未填寫（${ownersLabel(indicator.field_owners[f])}）`)
+  const unassigned = empty.some((f) => indicator.field_owners[f].length === 0)
+  return {
+    level: 'warning',
+    message: `${parts.join('；')}，${unassigned ? '請聯絡管理員指派負責人' : '需等對方填完才能送審'}`,
+  }
+}
+
 /**
  * 驗證單一指標的輸入值
+ *
+ * 送審時的必填檢查只看 editable_fields（自己負責的欄位）；他人負責的欄位若還是空的只給 warning。
  */
 export function validateIndicator(
   indicator: IndicatorFormItem,
@@ -17,32 +154,26 @@ export function validateIndicator(
   isSubmitting = false
 ): ValidationResult {
   if (!fv) {
-    if (isSubmitting) return { level: 'error', message: '送審前必須填寫數值' }
-    return { level: 'ok', message: '' }
+    if (isSubmitting && indicator.editable_fields.length > 0) {
+      return { level: 'error', message: '送審前必須填寫數值' }
+    }
+    return OK
   }
 
   const numStr = fv.numerator.trim()
   const denStr = fv.denominator.trim()
 
   // ── 空值檢查（送審時）──────────────────────────────────────
+  let pending: ValidationResult | null = null
   if (isSubmitting) {
-    if (!indicator.has_denominator && numStr === '') {
-      return { level: 'error', message: '送審前必須填寫數值' }
-    }
-    if (indicator.has_denominator && (numStr === '' || denStr === '')) {
-      return { level: 'error', message: '送審前分子與分母皆必須填寫' }
-    }
-    if (indicator.is_ha10_hsinchu) {
-      const allFilled = indicator.sub_entries.every(
-        (sub) => (fv.sub_entries[sub.sub_code] ?? '').trim() !== ''
-      )
-      if (!allFilled) return { level: 'error', message: '送審前所有子類別皆必須填寫' }
-    }
+    const ownError = ownFieldError(indicator, fv)
+    if (ownError) return ownError
+    pending = othersPending(indicator, fv)
   }
 
   // 未填時不進行硬性驗證
   if (numStr === '' && (denStr === '' || !indicator.has_denominator)) {
-    return { level: 'ok', message: '' }
+    return pending ?? OK
   }
 
   const num = parseFloat(numStr)
@@ -68,6 +199,9 @@ export function validateIndicator(
   if (indicator.has_denominator && !isNaN(num) && !isNaN(den) && den > 0 && num > den) {
     return { level: 'error', message: `分子（${num}）不可大於分母（${den}）` }
   }
+
+  // ── 他人負責的欄位還沒填（只提醒）──────────────────────────
+  if (pending) return pending
 
   // ── 分母為 0 ─────────────────────────────────────────────
   if (indicator.has_denominator && !isNaN(den) && den === 0) {
