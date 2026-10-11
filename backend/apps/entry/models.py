@@ -71,6 +71,14 @@ class AssignmentRole(models.TextChoices):
     DEPUTY = "deputy", "代理人"
 
 
+class AssignmentField(models.TextChoices):
+    """Which input field(s) of an indicator an assignment covers (D2)."""
+
+    BOTH = "both", "分子與分母"
+    NUMERATOR = "numerator", "分子"
+    DENOMINATOR = "denominator", "分母"
+
+
 class IndicatorAssignment(models.Model):
     indicator_code = models.CharField("指標代碼", max_length=20, db_index=True)
     campus = models.ForeignKey(Campus, on_delete=models.CASCADE, verbose_name="院區")
@@ -81,6 +89,11 @@ class IndicatorAssignment(models.Model):
         related_name="assignments",
     )
     role = models.CharField("職責", max_length=10, choices=AssignmentRole.choices, default=AssignmentRole.PRIMARY)
+    # Field-level assignment: numerator and denominator of one indicator may belong to different people.
+    # Rows created before this column existed are "both", i.e. unchanged behaviour.
+    field = models.CharField(
+        "負責欄位", max_length=12, choices=AssignmentField.choices, default=AssignmentField.BOTH
+    )
     effective_from = models.DateField("生效起始日")
     effective_to = models.DateField("失效日", null=True, blank=True)  # null = 現行有效
     created_by = models.ForeignKey(
@@ -112,6 +125,10 @@ class ReportStatus(models.TextChoices):
     SUBMITTED = "submitted", "已送審"
     APPROVED = "approved", "已核准"
     FINALIZED = "finalized", "已送出"
+
+
+# KD1: once a report is submitted, approved or finalized the reporters can no longer change it.
+REPORTER_LOCKED_STATUSES = (ReportStatus.SUBMITTED, ReportStatus.APPROVED, ReportStatus.FINALIZED)
 
 
 class MonthlyReport(models.Model):
@@ -159,6 +176,11 @@ class MonthlyReport(models.Model):
     def __str__(self):
         return f"{self.campus} {self.year}年{self.month}月 {self.category} [{self.status}]"
 
+    @property
+    def locked_for_reporters(self) -> bool:
+        """True while reporters may not change the report (submitted, approved or finalized)."""
+        return self.status in REPORTER_LOCKED_STATUSES
+
 
 # ── 5. 指標數據 ──────────────────────────────────────────────
 
@@ -188,6 +210,19 @@ class IndicatorEntry(models.Model):
         related_name="filled_entries", verbose_name="填報者"
     )
     filled_at = models.DateTimeField("填報時間", null=True, blank=True)
+    # Who last changed the numerator / denominator, and when. filled_by / filled_at above stay the
+    # entry-level "last modifier"; these two pairs say whose number each field is (D2: the two fields
+    # of one indicator can belong to different people). Reviewer edits deliberately leave them alone.
+    numerator_filled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+", verbose_name="分子填報者"
+    )
+    numerator_filled_at = models.DateTimeField("分子填報時間", null=True, blank=True)
+    denominator_filled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+", verbose_name="分母填報者"
+    )
+    denominator_filled_at = models.DateTimeField("分母填報時間", null=True, blank=True)
     data_source = models.CharField(
         "資料來源", max_length=20, choices=DataSource.choices, default=DataSource.MANUAL
     )

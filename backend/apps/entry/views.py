@@ -2,21 +2,20 @@
 填報系統管理 API
 §8.4 管理 API（指標負責人、截止日）
 """
-import datetime
 
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from apps.accounts.permissions import IsAdmin
-from apps.entry.models import Campus, DeadlineSetting, IndicatorAssignment, ReportCategory
+from apps.entry.models import AssignmentField, Campus, DeadlineSetting, IndicatorAssignment, ReportCategory
 from apps.entry.serializers import (
     CampusSerializer,
     DeadlineSettingSerializer,
     IndicatorAssignmentSerializer,
     ReportCategorySerializer,
 )
-
+from apps.entry.services.errors import rejected
 
 # ── 院區 ────────────────────────────────────────────────────────
 
@@ -43,17 +42,23 @@ def category_list(request):
 @api_view(["GET", "POST"])
 @permission_classes([IsAdmin])
 def assignment_list(request):
-    """GET/POST /api/admin/assignments?campus=zhubei"""
+    """GET/POST /api/admin/assignments?campus=zhubei&indicator=HA01-01&field=numerator"""
     if request.method == "GET":
         qs = IndicatorAssignment.objects.select_related("campus", "user").filter(
             effective_to__isnull=True  # 僅顯示現行有效指派
-        )
+        ).order_by("indicator_code", "campus_id", "id")
         campus_code = request.query_params.get("campus")
         if campus_code:
             qs = qs.filter(campus__code=campus_code)
         indicator_code = request.query_params.get("indicator")
         if indicator_code:
             qs = qs.filter(indicator_code=indicator_code)
+        field = request.query_params.get("field")
+        if field:
+            # the stored value: ?field=numerator lists the numerator-only rows, not the "both" rows
+            if field not in AssignmentField.values:
+                raise rejected(f"field 必須是 {'、'.join(AssignmentField.values)} 之一", "invalid_field")
+            qs = qs.filter(field=field)
         return Response(IndicatorAssignmentSerializer(qs, many=True).data)
 
     serializer = IndicatorAssignmentSerializer(data=request.data)

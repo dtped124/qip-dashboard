@@ -1,5 +1,67 @@
 # 更新日誌 (CHANGELOG)
 
+## 雲端化 P5 — 欄位級指派：後端（2026-10-11，`feat/field-assignment-api`）
+
+只動後端；前端是 P6。回應結構以「新增欄位」為主，但**不是完全向下相容**：舊前端會碰到的差異逐項列在「破壞點」，完整對照表在 `docs/API_REFERENCE.md` 的「與 P5 之前的差異」。
+
+### ✨ 新功能 / 改進
+- **欄位級指派（D2）**：`IndicatorAssignment.field` ∈ `both`／`numerator`／`denominator`（預設與既有資料都是 `both`）。同一指標的分子與分母可以指派給不同的人，後端真的把關。`IndicatorEntry` 新增 `numerator_filled_by/at`、`denominator_filled_by/at`（分子、分母各自是誰填的；`filled_by/at` 仍是整筆的最後修改者）
+- **存檔只寫有權的欄位、不覆寫別人的**（`save_draft` 重寫）：沒有指派的指標 → 403 `not_assigned`；payload 出現沒有權限的欄位 → 400 `field_not_assigned`；兩者都是整筆拒絕、什麼都不寫。payload 沒出現的欄位不動、`null` 才是清空、不是數字 → 400 `invalid_number`（以前靜默略過，缺的 key 還會把別人填的值覆寫成 NULL）。報表列與指標列都 `select_for_update`，`value` 用鎖住後的最新分子／分母重算；數值有變才更新欄位與 `*_filled_by/at`。回應多一個 `entries`（伺服器端最新值，含別人的欄位）。**沒有可寫的東西**（`entries` 為空、每筆只有指標代碼、只有 `sub_entries: []`）時不建立月報、不改狀態，回 `report_id: null`、`status: unfilled`；明確的 `null`（清空）或 `note: ""` 算有東西要寫
+- **月報鎖定（KD1）**：`submitted`、`approved`、`finalized` 都鎖填報者（以前 `approved` 沒鎖）→ 403 `report_locked`。表單回應多 `report.locked`
+- **送審（KD2、KD3）**：檢查「整個院區 × 面向」所有有現行指派的指標，不只送審者自己的；完整性看必填欄位是否為 NULL（分母 0 算已填，以前分母 0 的指標永遠送不出去）；`HA10-01` × 新竹另外要 13 個子類別都有值。缺漏 → 400 `incomplete`，`missing` 列出 `{indicator_code, indicator_name, field, owners, unassigned}`，沒負責人的標「未指派」。資格：該院區 × 面向有任一現行指派，或 admin（可代為送審，KD4）。沒有資格時，錯誤在院區解析那一步就回了：`campus` 不在指派內 → 403 `campus_not_assigned`；沒帶 `campus` 且該面向沒有任何指派 → 400 `no_assignment`。服務層另留一道 `not_assigned` 檢查，只防直接呼叫 `submit_category` 的程式，API 走不到
+- **院區解析不再退回 `user.campus`**：`campus`（query／body）必須在使用者該面向的有效指派內（admin 例外）；沒給則只有一個院區才自動採用。新增 `services/assignments.py` 的 `resolve_campus`
+- **GET 表單唯讀**：不再 `get_or_create` 月報；月報不存在時回 `status=unfilled`、`report.id=null`。每個指標多 `editable_fields`、`field_owners`、`numerator_filled_by/at`、`denominator_filled_by/at`。表單只列「我有指派」的指標（二擇一的另一個選項是連別人專屬的指標也列出、`editable_fields` 為空；沒選，因為舊前端存檔會把列出的每一列都送回來，列出不是我的指標會讓整筆存檔 403）
+- **`my-tasks`**：改以 院區 × 面向 分組（以前用面向代碼當 key，兩個院區互相蓋掉；退回通知也會跑出不是自己的面向）。每列多 `campus_code`、`campus_name`、`my_filled`／`my_total`（我負責的欄位數）、`category_missing`（整個院區 × 面向還缺幾個必填欄位）；`rejection_notices` 帶院區
+- **指派 API**：`field` 欄位與 `?field=` 篩選；`validate()` 把送來的值疊在既有那一列上再驗（PATCH 也驗）：指標存在、沒有分母的指標不能只指派分母、被指派者是啟用中的填報者（admin 也可）、`effective_from <= effective_to`、同一 (指標, 院區, 使用者) 的現行指派欄位不得重疊（`both` 與任何都重疊）。指標清單／詳情多 `has_denominator`、`entry_mode`
+- **HA10 子類別收斂（D10）**：13 類加總只適用 `HA10-01` × 新竹；新竹的 `HA10-04` 等其他 HA10 指標和其他院區的 `HA10-01` 都是一般數字（以前所有 `HA10*` × 新竹都走子類別，`HA10-04` 因此被當成 13 類子項加總）。`uses_sub_entries()` 是唯一判斷處，`grep 'startswith("HA10")'` 已無輸出。填報者的存檔只要帶 `sub_entries`，分子一律被設成 13 類加總（子項沒變也一樣，會修正與子項脫鉤的分子）；`sub_entries: []`（或 `null`）視為沒送，其他指標送**非空**的 `sub_entries` 才是 400
+- **個案清單指標在表單唯讀（KD9）**：`editable_fields` 為 `[]`，數字欄位寫入 → 400 `field_not_assigned`；**備註可以寫**（有該指標指派即可。以前備註被靜默丟掉，而且那次存檔還會順手建出一份 draft 月報）。個案的排除／恢復必須對該指標有分子指派、月報未鎖（否則 403 `not_assigned`／`report_locked`），重算後記下 `numerator_filled_by/at`
+- **審核者修改（KD5）**：`edit_entry` 只在 `submitted`／`approved` 可改（`draft` 時改會被填報者的自動暫存蓋掉）；不受欄位指派限制、不改 `*_filled_by`；有分母的指標不能直接改 `value`；一律用 `compute_value` 重算。**新竹 `HA10-01` 的分子（13 類子項加總）也不能直接改**：`numerator`、`value` → 400 `field_not_editable`，訊息請對方改子項。審核詳情多四個逐欄「誰填的」欄位
+- **共用 `compute_value`**（`services/values.py`）：取代 `_calculate_value`、`review_service` 與 `views_case_list` 各自一份的計算、`import_service._calc_value`。Excel 匯入把匯入者記為分子／分母的填報者
+
+### 🔐 安全性
+- **個案清單讀取要有指派（H1）**：`GET /api/case-list/` 以前任何登入的填報者／審核者都能讀任何指標 × 院區 × 月份的個案（含 `his_raw_data`），病歷號是否遮罩只看帳號上的 `user.campus`。現在 reviewer｜admin 讀得到全部；reporter 必須對該指標 × 院區 × 月份有現行指派（任一欄位），否則 403 `not_assigned`。這一關在查任何資料之前，被拒的人分不出院區、月報、指標存不存在（都是 403）。完整病歷號改依「reviewer｜admin 或在該院區有現行指派」，不再看 `user.campus`；能通過上一關的 reporter 必定在該院區有指派，所以實際上讀到的是完整病歷號，遮罩版只留給不符資格的呼叫者（目前沒有）。`exclusion-reasons` GET 維持原樣。`apps/accounts/tests` 的 `TestCaseListPatientNumberMasking` 隨之改成指派制
+- 個案排除／恢復以前任何填報者都能對任何 id 操作，現在要對該指標有分子指派、月報未鎖
+
+### 🐛 修正
+- `unlock_month` 回傳的 `unlocked_count` 永遠是 0（update 之後才 count，狀態篩選已不成立）
+- `edit_entry`：JSON 數字 `0` 被當成空白而清掉欄位；稽核紀錄把 0 記成空字串；分母改成 0 時舊的 `value` 留在原地；備註超過 100 字時稽核紀錄寫入失敗
+- `_recalculate_entry` 沒有分母或分母為 0 時留下舊 `value`
+- **年月不合法一律 400 `invalid_period`**：`my-tasks`、`form`、`save-draft`、`submit`、`GET /api/case-list/` 遇到 `month=-1`／`0`／`13`、`year=1000000`、民國 8088 年 12 月這類年月，以前都是 500。`my-tasks` 先驗年月再算截止日（截止日的日期運算碰到 `month=-1`、`year=1000000` 會直接 `ValueError`），`period_bounds` 也確認「下個月」存在。POST 的 `year`／`month` 缺或不是數字是 400 `missing_params`
+- 算出的值放不進 `numeric(12,6)` 時回 400 `value_out_of_range`，不再是 500
+
+### ⚠️ 破壞點（對舊前端，P6 之前）
+- 送審缺漏的錯誤 body 不再有 `ok`、`error`，改為 `{detail, code: "incomplete", missing, unfilled_codes}`（前端型別只宣告了 `unfilled_codes`，沒讀 `ok`／`error`）
+- `form` 的 `report.id` 在月報還不存在時是 `null`（型別原本是 `number`，因為以前 GET 會順手建立月報）
+- 月報被鎖時存檔／送審由 400 改成 403 `report_locked`；`approved` 以前還能存，現在也鎖
+- 使用者在某面向有多個院區的指派，`form`／`save-draft`／`submit` 不帶 `campus` → 400 `campus_required`（以前悄悄用第一筆指派的院區）。`/entry` 首頁同一個面向會出現兩列，`key` 重複，連結仍是 `/entry/<面向>`，點進去就是這個 400
+- 使用者在某面向沒有任何指派卻打開 `/entry/<面向>` → 400 `no_assignment`（以前退回帳號院區，顯示空表單）
+- `GET /api/case-list/`：沒有該指標指派的 reporter → 403 `not_assigned`（以前任何登入者都讀得到）；病歷號遮罩不再看 `user.campus`
+- 指標只有部分欄位指派給我，舊表單會連另一個欄位一起送回 → 400 `field_not_assigned`（目前資料全是 `both`，不會遇到；P6 的表單只送 `editable_fields`）
+- 個案清單指標若有指派，舊表單存檔會把它的分子／分母送回來 → 400 `field_not_assigned`（目前資料裡沒有個案清單指標）
+- 沒有可寫內容的存檔（`entries: []`）不再建立 draft 月報
+- `my-tasks` 的 `filled_count` 改看必填欄位是否為 NULL（比以前「分子或計算值不是 NULL」嚴格）
+
+### 📁 修改檔案
+| 檔案 | 修改內容 |
+|------|---------|
+| `backend/apps/entry/models.py`、`migrations/0003_field_level_assignment.py`（新） | `AssignmentField`、`IndicatorAssignment.field`、`IndicatorEntry` 四個逐欄填報者欄位（五個 AddField，不 backfill）、`MonthlyReport.locked_for_reporters` |
+| `backend/apps/entry/services/assignments.py`（新） | `period_bounds`、`active_assignments`、`assigned_fields`／`editable_fields`、`required_fields`、`field_owners`、`resolve_campus` |
+| `backend/apps/entry/services/values.py`（新） | `compute_value`、`parse_number`、`uses_sub_entries`、HA10 子類別表 |
+| `backend/apps/entry/services/errors.py`（新） | `{"detail", "code", ...}` 的 403／400／404 例外（額外欄位保持 JSON 型別） |
+| `backend/apps/entry/services/entry_service.py` | 重寫：`get_my_tasks`、`get_category_form`、`save_draft`、`submit_category` |
+| `backend/apps/entry/services/{review,import}_service.py`、`views_case_list.py`、`views_review.py` | `edit_entry`／`unlock_month`／審核詳情；匯入記錄填報者；個案清單讀取授權、排除／恢復權限與重算；錯誤帶 `code` |
+| `backend/apps/entry/views_entry.py`、`views.py`、`serializers.py`、`admin.py`、`backend/apps/indicators/serializers.py` | 院區解析、`?field=`、指派驗證、`has_denominator`／`entry_mode` |
+| `backend/apps/entry/tests/`（新） | 309 條測試（`test_field_assignment.py`、`test_assignment_serializer.py`、`test_submit_and_review.py`） |
+| `backend/apps/accounts/tests/test_permissions.py` | `TestCaseListPatientNumberMasking` 改成指派制（無指派 403、有指派讀到完整病歷號、`user.campus` 與 `is_staff` 不算） |
+| `docs/API_REFERENCE.md`、`docs/DATABASE_SCHEMA.md`、`QIP-DataEntry-System-Spec-v1.3.md` | 填報／指派／審核／個案清單段、欄位、§2.4 欄位級指派補充 |
+| `HANDOFF.md` | P5 已完成一行、已知缺口 |
+
+### ✅ 測試
+- 後端 `apps/entry/tests` 309 條、`apps/accounts/tests` 290 條（289 條加上個案清單讀取授權多出的 1 條）全綠；全套 `pytest -q`：628 通過、23 略過，唯一失敗仍是既有的 `test_control_chart.py::test_binomial_rare_event_returns_imr`；`manage.py test apps.davinci` 63 條 OK
+- 鎖定行為有兩層測試：SQL 層（存檔鎖報表列與指標列）與真的雙連線（一個交易握著報表鎖時，另一人的存檔會等待，放行後以對方已提交的分子重算，不覆寫它）
+
+---
+
 ## 雲端化 P4 — 前端認證狀態與角色分流（2026-10-11，`feat/role-routing`）
 
 ### ✨ 新功能 / 改進

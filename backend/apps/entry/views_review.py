@@ -13,6 +13,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from apps.accounts.permissions import IsAdmin, IsReviewer
+from apps.entry.models import Campus
 from apps.entry.services.period import get_current_tw_year_month
 from apps.entry.services.review_service import (
     approve_category,
@@ -23,7 +24,6 @@ from apps.entry.services.review_service import (
     reject_category,
     unlock_month,
 )
-from apps.entry.models import Campus
 
 
 def _parse_year_month(request):
@@ -41,6 +41,14 @@ def _get_campus(campus_code: str):
         return Campus.objects.get(code=campus_code)
     except Campus.DoesNotExist:
         return None
+
+
+def _failure(result: dict) -> Response:
+    """400 for a service result with ok=False: {"detail", "code"?} (code only when the service named one)."""
+    body = {"detail": result["error"]}
+    if result.get("code"):
+        body["code"] = result["code"]
+    return Response(body, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(["GET"])
@@ -107,15 +115,19 @@ def review_reject(request):
 def review_edit_entry(request):
     """PATCH /api/review/edit-entry  body: {entry_id, field, new_value, reason}"""
     d = request.data
+    try:
+        entry_id = int(d.get("entry_id", 0))
+    except (TypeError, ValueError):
+        entry_id = 0
     result = edit_entry(
         request.user,
-        int(d.get("entry_id", 0)),
+        entry_id,
         d.get("field", ""),
         d.get("new_value", ""),
         d.get("reason", ""),
     )
     if not result["ok"]:
-        return Response({"detail": result["error"]}, status=status.HTTP_400_BAD_REQUEST)
+        return _failure(result)
     return Response(result)
 
 
@@ -145,5 +157,5 @@ def review_unlock(request):
 
     result = unlock_month(request.user, campus, int(d["year"]), int(d["month"]), d.get("reason", ""))
     if not result["ok"]:
-        return Response({"detail": result["error"]}, status=status.HTTP_400_BAD_REQUEST)
+        return _failure(result)
     return Response(result)
