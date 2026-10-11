@@ -1,0 +1,31 @@
+# Build context of Dockerfile.web (the repository root). Keep out everything the web image must not
+# contain or does not need.
+
+# VCS and dependencies/build output (the image installs and builds its own)
+.git
+node_modules
+.next
+out
+*.tsbuildinfo
+
+# the backend has its own image and its own context (backend/.dockerignore)
+backend
+
+# documentation
+docs
+*.md
+
+# secrets and local configuration: .env, .env.local, .env.prodtest, ...
+.env*
+
+# tooling and scratch
+.claude
+.Rhistory
+
+# real hospital data: never part of an image (local-data/ is where they live). *.xls* also covers xlsx, xlsm, xlsb.
+local-data
+**/*.xls*
+**/*.csv
+# the match is case sensitive: keep REPORT.XLS, Export.Csv and the like out as well
+**/*.[xX][lL][sS]*
+**/*.[cC][sS][vV]

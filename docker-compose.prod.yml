@@ -1,0 +1,113 @@
+# QIP 監測指標系統 — 正式環境樣板（平台無關）
+#
+#   web (Next.js, 對外)  ──/api/*──▶  api (Django + gunicorn, 僅內網)  ──▶  db (PostgreSQL)、redis
+#
+# 只有 web 對外開 port。db、redis、api 都不發佈 port：瀏覽器只會連到 web，/api/* 由 web 在伺服器端轉給 api
+# （next.config.mjs 的 rewrites）。Django 的 admin 因此也不會經過 web，見 docs/DEPLOYMENT.md。
+#
+# 用法（細節與必填變數見 docs/DEPLOYMENT.md）：
+#   cp .env.prod.example .env.prod       # 填好 DJANGO_SECRET_KEY、DJANGO_ALLOWED_HOSTS、密碼 …
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#
+# 這份檔案和開發堆疊（docker-compose.yml，在同一個目錄）靠兩件事分開：
+#   1. 頂層 name: qip-prod 固定 project 名稱。沒有它，兩份檔案都用目錄名 qip-dashboard 當 project 名稱，
+#      兩邊同名的 api、redis 服務會被當成同一個容器：up 會用正式的設定把開發的容器換掉，down 會把它們刪掉，
+#      --remove-orphans 連開發的 postgres 也一起刪。
+#   2. 設定檔是 .env.prod，不是 .env。Compose 會自動讀專案目錄的 .env 來做 ${...} 內插，而開發堆疊正在用它
+#      （DB_USER、DB_PASSWORD、SEED_ADMIN_PASSWORD）；--env-file 會取代這個自動讀取，所以指令一律帶 --env-file .env.prod。
+# 本機試跑用另一份設定檔與另一個 project 名稱（-p 會蓋過 name:）：該檔裡加一行 ENV_FILE=<檔名>，再用
+#   docker compose -p qip-prodtest -f docker-compose.prod.yml --env-file .env.prodtest up -d --build
+# --env-file 只決定這份 compose 檔裡的 ${...} 內插；容器拿到的環境變數來自下面 api 的 env_file，
+# 兩者靠 ENV_FILE 指到同一份檔案（預設 .env.prod）。
+#
+# 尚未涵蓋（平台決定後再補）：TLS 憑證與網域、平台的反向代理／負載平衡器、對 /api/auth/login 的每 IP 限流、
+# 備份排程、外部的託管資料庫（改用 DATABASE_URL 並移除下面的 db 服務）。
+
+name: qip-prod
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-qm_center}
+      POSTGRES_USER: ${POSTGRES_USER:-qm_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 必須設定（沒帶 --env-file .env.prod？）}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      # -h 127.0.0.1：初始化期間的暫時伺服器只聽 unix socket，連 TCP 才會等到正式啟動後才算健康
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    # 不傳 INSTALL_DEV：預設 0，映像裡沒有 pytest、ruff（開發堆疊的 docker-compose.yml 才傳 1）
+    build: ./backend
+    # init：行程 1 是 tini，負責轉發 SIGTERM 與回收殭屍行程（gunicorn 的 worker 被殺後）
+    init: true
+    restart: unless-stopped
+    env_file: ${ENV_FILE:-.env.prod}
+    volumes:
+      # 達文西匯入的「預覽 → 確認」要讀回上傳的檔案：需要持久 volume，且目前只能單一副本
+      - media:/app/media
+    healthcheck:
+      # 容器內部探針，Host 為 localhost：DJANGO_ALLOWED_HOSTS 要包含 localhost
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os,urllib.request;urllib.request.urlopen('http://localhost:%s/healthz' % os.environ.get('PORT', '8000'))"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # 第一次啟動要等 DB、建 schema、migrate、seed
+      start_period: 90s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      # 這三個在 build 時固化（next.config.mjs），改了要重新 build
+      args:
+        API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:8000}
+        API_PROXY_TIMEOUT_MS: ${API_PROXY_TIMEOUT_MS:-120000}
+        NEXT_HSTS_SECONDS: ${NEXT_HSTS_SECONDS:-0}
+    init: true
+    restart: unless-stopped
+    ports:
+      # 平台上通常由它的路由層／負載平衡器接手；這裡直接發佈 port 方便本機試跑。
+      # WEB_BIND 預設 0.0.0.0（所有網卡）；本機試跑設 127.0.0.1，只有這台機器連得到
+      - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-3000}:3000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000/entry/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  db_data:
+  media:

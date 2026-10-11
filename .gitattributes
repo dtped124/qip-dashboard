@@ -1,0 +1,4 @@
+# Shell scripts run inside Linux containers: a CRLF checkout (Windows, core.autocrlf=true) breaks the
+# `#!/bin/sh` line ("no such file or directory") and every command after it.
+*.sh text eol=lf
+backend/entrypoint.sh text eol=lf

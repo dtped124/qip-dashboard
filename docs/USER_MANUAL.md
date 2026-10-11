@@ -65,10 +65,10 @@
 npm install
 npm run dev            # http://localhost:3000
 
-# 後端（Docker）
-cd backend
+# 後端（Docker，於專案根目錄）
 docker compose up -d
 ```
+正式環境（伺服器）的部署方式見 `docs/DEPLOYMENT.md`。
 
 ### 2.3 預設帳號
 - 登入識別：**員工編號**（`employee_id`）
@@ -649,6 +649,7 @@ qip-dashboard/
 │   ├── DATABASE_SCHEMA.md
 │   ├── API_REFERENCE.md
 │   ├── DEVELOPMENT_GUIDE.md
+│   ├── DEPLOYMENT.md
 │   ├── USER_MANUAL.md
 │   ├── CHANGELOG.md
 │   ├── TODO.md

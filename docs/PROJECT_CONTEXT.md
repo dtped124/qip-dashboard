@@ -22,7 +22,7 @@
 - **文件匯出**：docx、xlsx
 - **後端框架**：Django 5 + Django REST Framework
 - **資料庫**：PostgreSQL（schema `qip`）/ SQLite（開發）
-- **部署**：Docker Compose（後端）+ Next.js Static Export（前端）
+- **部署**：兩個容器映像（Django + gunicorn、Next.js standalone）＋ `docker-compose.prod.yml` 樣板，平台無關，見 `docs/DEPLOYMENT.md`；Next.js Static Export 仍可產出 Portable 版
 
 ---
 
@@ -74,25 +74,27 @@ C:\claude\QIP monitor\qip-dashboard\
 │   │   ├── settings/{base,dev,prod}.py
 │   │   └── urls.py                   # 所有 URL 掛載
 │   ├── apps/
+│   │   ├── core/                     # bootstrap 指令（啟動程序）、/healthz
 │   │   ├── accounts/                 # 自訂 User（employee_id 登入）
 │   │   ├── indicators/               # Indicator、DataPoint、YearlySummary、TCPI、Alert
 │   │   ├── imports/                  # ImportLog、MatchingRule + Excel parser
 │   │   ├── entry/                    # 填報系統（MonthlyReport、IndicatorEntry、Case...）
 │   │   └── analysis/                 # 管制圖、異常偵測、趨勢、彙總引擎
-│   ├── docker-compose.yml
-│   ├── docker-compose.prod.yml
-│   ├── Dockerfile
-│   ├── init-db.sql                   # PostgreSQL schema 建立
-│   ├── requirements.txt
-│   └── start.bat
-├── public/
+│   ├── Dockerfile                    # api 映像（非 root、build 時 collectstatic）
+│   ├── entrypoint.sh                 # 容器入口：bootstrap → gunicorn
+│   ├── init-db.sql                   # 開發 postgres 容器的 schema 建立
+│   ├── requirements.txt              # 應用程式相依（正式映像只裝這份）
+│   └── requirements-dev.txt          # 加 pytest、ruff（開發 compose 以 INSTALL_DEV=1 安裝）
 ├── out/                              # Next.js static export 輸出
 ├── 115年平衡計分卡關鍵指標-品管中心v2.xlsx
-├── docker-compose.yml
+├── Dockerfile.web                    # web 映像（Next.js standalone）
+├── docker-compose.yml                # 開發堆疊（postgres/redis/api）
+├── docker-compose.prod.yml           # 正式環境樣板（db/redis/api/web）
+├── .env.prod.example                 # 正式環境變數樣板（複製成 .env.prod）
 ├── next.config.mjs
 ├── package.json
 ├── start.bat
-└── docs/                             # 本文件夾
+└── docs/                             # 本文件夾（含 DEPLOYMENT.md）
 ```
 
 ---

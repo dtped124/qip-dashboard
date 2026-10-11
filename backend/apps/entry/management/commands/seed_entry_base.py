@@ -3,7 +3,8 @@
 
 Usage:
     python manage.py seed_entry_base
-    python manage.py seed_entry_base --clear  # 清除後重建
+    python manage.py seed_entry_base --clear         # 清除後重建
+    python manage.py seed_entry_base --only-missing  # 只補缺的，已存在的資料一律不動
 """
 from django.core.management.base import BaseCommand
 
@@ -43,28 +44,41 @@ class Command(BaseCommand):
     help = "載入填報系統基礎資料（院區、面向、排除理由）"
 
     def add_arguments(self, parser):
-        parser.add_argument("--clear", action="store_true", help="清除後重建")
+        mode = parser.add_mutually_exclusive_group()
+        mode.add_argument("--clear", action="store_true", help="清除後重建")
+        mode.add_argument(
+            "--only-missing",
+            action="store_true",
+            help="只新增資料庫裡還沒有的項目；已存在的不覆寫（保留管理員改過的名稱、排序）",
+        )
 
     def handle(self, *args, **options):
+        only_missing = options["only_missing"]
+
         if options["clear"]:
             Campus.objects.all().delete()
             ReportCategory.objects.all().delete()
             ExclusionReason.objects.all().delete()
             self.stdout.write("已清除舊資料")
 
-        # 院區
-        for data in CAMPUSES:
-            Campus.objects.update_or_create(code=data["code"], defaults=data)
-        self.stdout.write(self.style.SUCCESS(f"✓ 院區：{len(CAMPUSES)} 筆"))
-
-        # 面向
-        for data in CATEGORIES:
-            ReportCategory.objects.update_or_create(code=data["code"], defaults=data)
-        self.stdout.write(self.style.SUCCESS(f"✓ 面向：{len(CATEGORIES)} 筆"))
-
-        # 排除理由
-        for data in EXCLUSION_REASONS:
-            ExclusionReason.objects.update_or_create(code=data["code"], defaults=data)
-        self.stdout.write(self.style.SUCCESS(f"✓ 排除理由：{len(EXCLUSION_REASONS)} 筆"))
+        self._load("院區", Campus, CAMPUSES, only_missing)
+        self._load("面向", ReportCategory, CATEGORIES, only_missing)
+        self._load("排除理由", ExclusionReason, EXCLUSION_REASONS, only_missing)
 
         self.stdout.write(self.style.SUCCESS("填報系統基礎資料載入完成"))
+
+    def _load(self, label, model, rows, only_missing):
+        created = 0
+        for data in rows:
+            if only_missing:
+                _, was_created = model.objects.get_or_create(code=data["code"], defaults=data)
+            else:
+                _, was_created = model.objects.update_or_create(code=data["code"], defaults=data)
+            created += was_created
+
+        if only_missing:
+            self.stdout.write(self.style.SUCCESS(
+                f"✓ {label}：新增 {created} 筆，略過 {len(rows) - created} 筆（已存在，未覆寫）"
+            ))
+        else:
+            self.stdout.write(self.style.SUCCESS(f"✓ {label}：{len(rows)} 筆"))

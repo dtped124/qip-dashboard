@@ -188,7 +188,6 @@ DJANGO_SETTINGS_MODULE=config.settings.dev
 DB_NAME=qm_center / DB_USER=qm_admin / DB_PASSWORD=devpassword
 DB_HOST=postgres / DB_PORT=5432 / DB_SCHEMA=qip
 REDIS_URL=redis://redis:6379/1
-CELERY_BROKER_URL=redis://redis:6379/2
 ```
 
 ---

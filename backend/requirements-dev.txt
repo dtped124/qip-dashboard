@@ -1,0 +1,10 @@
+# Test and lint tools, on top of the application's own requirements:
+#   pip install -r requirements-dev.txt
+# The production image does not install this file; backend/Dockerfile reads it only when the build argument
+# INSTALL_DEV is 1 (the development compose file passes it, so `docker compose exec api pytest` works).
+-r requirements.txt
+
+pytest>=8.0
+pytest-django>=4.8
+pytest-cov>=5.0
+ruff>=0.4

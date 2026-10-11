@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.urls import include, path
 
 from apps.accounts.urls import admin_urlpatterns
+from apps.core.views import healthz
 from apps.entry.urls import (
     case_list_urlpatterns,
     dashboard_entry_urlpatterns,
@@ -12,6 +13,9 @@ from apps.entry.urls import (
 from apps.indicators.views import dashboard_bulk, tcpi_benchmarks
 
 urlpatterns = [
+    # 平台探針（不需登入、不經 DRF；Next 只代理 /api/*，所以對外看不到它）
+    path("healthz", healthz, name="healthz"),
+
     path("admin/", admin.site.urls),
 
     # 認證

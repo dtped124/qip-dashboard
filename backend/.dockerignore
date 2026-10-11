@@ -4,6 +4,7 @@ __pycache__
 **/__pycache__
 **/*.pyc
 .env
+.env.*
 .git
 .ruff_cache
 .pytest_cache
@@ -13,3 +14,18 @@ htmlcov
 venv
 .venv
 node_modules
+
+# Real data and generated files never go into an image.
+# Uploaded workbooks (davinci imports are saved under media/) and spreadsheets or CSV exports anywhere in the
+# tree (*.xls* also covers xlsx, xlsm, xlsb):
+media/
+**/*.xls*
+**/*.csv
+# the match is case sensitive: keep REPORT.XLS, Export.Csv and the like out as well
+**/*.[xX][lL][sS]*
+**/*.[cC][sS][vV]
+# collectstatic output (the Dockerfile rebuilds it):
+staticfiles/
+# the retired Streamlit app and the tests that live outside the apps:
+dashboard/
+tests/
