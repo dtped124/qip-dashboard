@@ -12,33 +12,22 @@ import os
 from rest_framework import status
 from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.accounts.permissions import IsReviewer
 from apps.entry.models import Campus, ImportBatch
 from apps.entry.services.import_service import confirm_import_batch, write_preview_entries
 
 
-def _require_reviewer_or_admin(request):
-    u = request.user
-    if not (u.is_reviewer or u.is_system_admin or u.is_staff):
-        return Response({"detail": "需要審核者或管理員權限"}, status=status.HTTP_403_FORBIDDEN)
-    return None
-
-
 @api_view(["POST"])
 @parser_classes([MultiPartParser, FormParser])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReviewer])
 def import_excel(request):
     """
     POST /api/import/excel
     multipart: file + campus + year + month
     → 解析後建立 ImportBatch (status=preview)，回傳預覽資料
     """
-    denied = _require_reviewer_or_admin(request)
-    if denied:
-        return denied
-
     file_obj = request.FILES.get("file")
     campus_code = request.data.get("campus", "")
     year = request.data.get("year")
@@ -96,13 +85,9 @@ def import_excel(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReviewer])
 def import_confirm(request):
     """POST /api/import/confirm  body: {batch_id}"""
-    denied = _require_reviewer_or_admin(request)
-    if denied:
-        return denied
-
     batch_id = request.data.get("batch_id")
     if not batch_id:
         return Response({"detail": "缺少 batch_id"}, status=status.HTTP_400_BAD_REQUEST)
@@ -114,7 +99,7 @@ def import_confirm(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReviewer])
 def import_batches(request):
     """GET /api/import/batches?campus=zhubei&year=115"""
     campus_code = request.query_params.get("campus")
@@ -146,7 +131,7 @@ def import_batches(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReviewer])
 def his_trigger(request):
     """POST /api/import/his-trigger  —  HIS 手動觸發（未實作）"""
     return Response({"detail": "HIS 串接尚未實作，等 HIS 報表格式確定後開發"},
@@ -154,7 +139,7 @@ def his_trigger(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReviewer])
 def his_webhook(request):
     """POST /api/import/his-webhook  —  HIS 主動推送（未實作）"""
     return Response({"detail": "HIS webhook 尚未實作"},

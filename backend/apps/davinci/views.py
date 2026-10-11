@@ -11,6 +11,11 @@
     GET  /api/davinci/cases/           個案明細（遮罩後）
     GET  /api/davinci/export/          匯出 xlsx（與儀表板同一計算路徑）
     GET  /api/davinci/meta/            指標定義 + 代碼表（前端初始化）
+
+Permissions (apps/accounts/permissions.py; admin passes every check):
+    meta, indicators, series, drilldown   dashboard readers (viewer | reviewer | admin): aggregates only
+    cases, export                         reviewer | admin: case-level rows (account number, surgeon)
+    import, import/confirm, import/logs   admin
 """
 from __future__ import annotations
 
@@ -20,8 +25,9 @@ from urllib.parse import quote
 
 from django.core.files.base import ContentFile
 from django.http import HttpRequest, HttpResponse, JsonResponse
-from django.views.decorators.csrf import csrf_exempt
 from openpyxl import Workbook
+
+from apps.accounts.permissions import REVIEWER, require_admin, require_readers, require_roles
 
 from .constants import (
     ADVERSE_EVENT_CODES,
@@ -68,7 +74,7 @@ def _get_mode(request: HttpRequest) -> tuple[str | None, JsonResponse | None]:
 
 # ── 匯入 ──
 
-@csrf_exempt
+@require_admin
 def import_upload(request: HttpRequest) -> JsonResponse:
     """POST /api/davinci/import/ — 上傳 → 解析 → 預覽報告（status=preview，不寫入）"""
     if request.method != "POST":
@@ -113,7 +119,7 @@ def import_upload(request: HttpRequest) -> JsonResponse:
     })
 
 
-@csrf_exempt
+@require_admin
 def import_confirm(request: HttpRequest) -> JsonResponse:
     """POST /api/davinci/import/confirm/ — {log_id} 重讀檔案 → 寫入（upsert 覆蓋同期別）"""
     if request.method != "POST":
@@ -148,6 +154,7 @@ def import_confirm(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"data": {"log_id": log.id, **stats}})
 
 
+@require_admin
 def import_logs(request: HttpRequest) -> JsonResponse:
     """GET /api/davinci/import/logs/ — 匯入紀錄（分頁格式依技術堆疊規範）"""
     page_size = 20
@@ -171,6 +178,7 @@ def import_logs(request: HttpRequest) -> JsonResponse:
 
 # ── 指標查詢 ──
 
+@require_readers
 def indicator_values(request: HttpRequest) -> JsonResponse:
     """GET /api/davinci/indicators/?campus=竹北[&mode=monthly|quarterly][&period=]
 
@@ -223,6 +231,7 @@ def indicator_values(request: HttpRequest) -> JsonResponse:
     })
 
 
+@require_readers
 def indicator_series(request: HttpRequest, code: str) -> JsonResponse:
     """GET /api/davinci/indicators/{code}/series?campus=竹北[&mode=][&dept=&surgeon=]
 
@@ -377,6 +386,7 @@ def _case_order_names(case: DavinciCase) -> list[str]:
     return list(dict.fromkeys(names)) or [UNKNOWN_ORDER]
 
 
+@require_readers
 def drilldown(request: HttpRequest) -> JsonResponse:
     """GET /api/davinci/drilldown?code=&campus=&period=&by=dept|surgeon|order[&dept=&surgeon=&order=]
 
@@ -433,6 +443,7 @@ def drilldown(request: HttpRequest) -> JsonResponse:
     })
 
 
+@require_roles(REVIEWER)  # row-level data: viewers only get the aggregates
 def case_list(request: HttpRequest) -> JsonResponse:
     """GET /api/davinci/cases?campus=&period=[&dept=&surgeon=&order=&code=]
 
@@ -499,6 +510,7 @@ def case_list(request: HttpRequest) -> JsonResponse:
 
 # ── 匯出 ──
 
+@require_roles(REVIEWER)  # 2nd sheet lists every case: same rule as case_list
 def export_xlsx(request: HttpRequest) -> HttpResponse:
     """GET /api/davinci/export/?campus=竹北 — 匯出指標值 + 個案明細。
 
@@ -558,6 +570,7 @@ def export_xlsx(request: HttpRequest) -> HttpResponse:
 
 # ── Meta ──
 
+@require_readers
 def meta(request: HttpRequest) -> JsonResponse:
     """GET /api/davinci/meta/ — 指標定義、代碼表、院區清單（前端初始化）"""
     return JsonResponse({

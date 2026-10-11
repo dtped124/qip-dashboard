@@ -2,7 +2,7 @@
 
 export type ReportStatus = 'unfilled' | 'draft' | 'submitted' | 'approved' | 'finalized'
 
-export type UserRole = 'reporter' | 'reviewer' | 'admin'
+export type UserRole = 'reporter' | 'reviewer' | 'admin' | 'viewer'
 
 export interface User {
   id: number

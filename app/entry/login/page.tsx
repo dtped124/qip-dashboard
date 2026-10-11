@@ -2,8 +2,11 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { login, changePassword } from '@/lib/entry/api'
+import { login, changePassword, logout } from '@/lib/entry/api'
+import { homeFor } from '@/lib/auth/roles'
 import type { User } from '@/lib/entry/types'
+
+const NO_ROLE_MESSAGE = '此帳號尚未指派身分，請聯絡品管中心'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -19,12 +22,17 @@ export default function LoginPage() {
   const [confirmPwd, setConfirmPwd] = useState('')
   const [changingPwd, setChangingPwd] = useState(false)
 
-  const navigateByRole = (user: User) => {
-    if (user.roles.includes('reviewer') || user.roles.includes('admin')) {
-      router.push('/entry/review')
-    } else {
-      router.push('/entry')
+  /** Go to the landing page of the user's role; false (with an error shown) if the account has no role yet. */
+  const navigateByRole = (user: User): boolean => {
+    const home = homeFor(user.roles)
+    if (home === null) {
+      // Do not leave a usable session behind for an account that has no role yet.
+      logout().catch(() => {})
+      setError(NO_ROLE_MESSAGE)
+      return false
     }
+    router.push(home)
+    return true
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -65,7 +73,8 @@ export default function LoginPage() {
     setError(null)
     try {
       await changePassword(newPwd)
-      navigateByRole(loggedInUser!)
+      // No role: leave the password form and show the message on the login screen.
+      if (!navigateByRole(loggedInUser!)) setShowChangePassword(false)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : '密碼修改失敗'
       setError(msg)

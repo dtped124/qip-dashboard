@@ -13,9 +13,10 @@ Endpoints:
 - GET  /api/v1/tcpi/                          — TCPI 標竿列表
 """
 from django.http import JsonResponse
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
+from apps.accounts.permissions import CanViewDashboard, ReadersGetAdminWrite, require_admin
 from .models import Indicator, DataPoint, YearlySummary, Alert, TCPIBenchmark
 from .serializers import (
     IndicatorSerializer, DataPointSerializer,
@@ -30,6 +31,7 @@ from .constants import SKIP_SPC_INDICATORS
 
 
 @api_view(["GET"])
+@permission_classes([CanViewDashboard])
 def indicator_list(request):
     """GET /api/v1/indicators/ — 取得所有指標"""
     campus = request.GET.get("campus", "")
@@ -49,6 +51,7 @@ def indicator_list(request):
 
 
 @api_view(["GET", "PATCH"])
+@permission_classes([ReadersGetAdminWrite])
 def indicator_detail(request, code: str):
     """
     GET   /api/v1/indicators/<code>/ — 指標詳情
@@ -130,6 +133,7 @@ def _refresh_indicator_alerts(ind: Indicator) -> None:
 
 
 @api_view(["GET"])
+@permission_classes([CanViewDashboard])
 def indicator_data(request, code: str):
     """GET /api/v1/indicators/<code>/data/?campus=竹北 — 月份資料"""
     campus = request.GET.get("campus", "")
@@ -147,6 +151,7 @@ def indicator_data(request, code: str):
 
 
 @api_view(["GET"])
+@permission_classes([CanViewDashboard])
 def indicator_alerts(request, code: str):
     """GET /api/v1/indicators/<code>/alerts/?campus=竹北 — 異常警示"""
     campus = request.GET.get("campus", "")
@@ -164,6 +169,7 @@ def indicator_alerts(request, code: str):
 
 
 @api_view(["GET"])
+@permission_classes([CanViewDashboard])
 def indicator_summaries(request, code: str):
     """GET /api/v1/indicators/<code>/summaries/?campus=竹北 — 年度摘要"""
     campus = request.GET.get("campus", "")
@@ -185,6 +191,7 @@ def indicator_summaries(request, code: str):
 
 
 @api_view(["GET"])
+@permission_classes([CanViewDashboard])
 def indicator_analysis(request, code: str):
     """GET /api/v1/indicators/<code>/analysis/?campus=竹北&period=monthly — 即時分析"""
     campus = request.GET.get("campus", "")
@@ -277,6 +284,7 @@ def indicator_analysis(request, code: str):
 
 
 @api_view(["GET"])
+@permission_classes([CanViewDashboard])
 def dashboard_bulk(request):
     """
     GET /api/v1/dashboard/?campus=竹北 — 儀表板批次載入
@@ -578,26 +586,35 @@ def _compute_trend(values: list[float | None], direction: str) -> str:
 
 # ── TCPI Benchmark API ──
 
+def build_tcpi_payload() -> dict:
+    """All TCPI benchmarks as {"data": [...], "total": n}.
+
+    Shared by GET /api/v1/tcpi/ and GET /api/dashboard/entry-benchmarks.
+    """
+    benchmarks = TCPIBenchmark.objects.all().order_by("indicator_id", "year")
+    data = [
+        {
+            "indicator_code": b.indicator_id,
+            "tcpi_name": b.tcpi_name,
+            "year": b.year,
+            "medical_center": b.medical_center,
+            "regional_hospital": b.regional_hospital,
+            "district_hospital": b.district_hospital,
+        }
+        for b in benchmarks
+    ]
+    return {"data": data, "total": len(data)}
+
+
 @api_view(["GET", "POST"])
+@permission_classes([ReadersGetAdminWrite])
 def tcpi_benchmarks(request):
     """
     GET  /api/v1/tcpi/ — 取得所有 TCPI 標竿
     POST /api/v1/tcpi/ — 批次匯入 TCPI 標竿（清除舊資料後寫入）
     """
     if request.method == "GET":
-        benchmarks = TCPIBenchmark.objects.all().order_by("indicator_id", "year")
-        data = [
-            {
-                "indicator_code": b.indicator_id,
-                "tcpi_name": b.tcpi_name,
-                "year": b.year,
-                "medical_center": b.medical_center,
-                "regional_hospital": b.regional_hospital,
-                "district_hospital": b.district_hospital,
-            }
-            for b in benchmarks
-        ]
-        return Response({"data": data, "total": len(data)})
+        return Response(build_tcpi_payload())
 
     # POST: bulk import
     # Use DRF's parsed payload: once SessionAuthentication has enforced CSRF the
@@ -632,6 +649,7 @@ def tcpi_benchmarks(request):
     return Response({"saved": saved, "total": len(items)})
 
 
+@require_admin
 def export_all_data(request):
     """GET /api/v1/export/ — 匯出全部資料供 QIP Portable 匯入"""
     from apps.imports.models import ImportLog, MatchingRule

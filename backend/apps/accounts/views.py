@@ -3,6 +3,7 @@
 帳號管理 API（系統管理員）
 """
 from django.contrib.auth import login, logout
+from django.http import JsonResponse
 from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import status
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
@@ -10,6 +11,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.accounts.models import User, UserRole
+from apps.accounts.permissions import IsAdmin
 from apps.accounts.serializers import (
     LoginSerializer,
     UserCreateSerializer,
@@ -52,20 +54,10 @@ def auth_me(request):
 
 # ── 帳號管理（系統管理員）────────────────────────────────────────
 
-def _require_admin(request):
-    if not request.user.is_system_admin and not request.user.is_staff:
-        return Response({"detail": "權限不足"}, status=status.HTTP_403_FORBIDDEN)
-    return None
-
-
 @api_view(["GET", "POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAdmin])
 def user_list(request):
     """GET/POST /api/admin/users"""
-    denied = _require_admin(request)
-    if denied:
-        return denied
-
     if request.method == "GET":
         qs = User.objects.select_related("campus").order_by("employee_id")
         return Response(UserSerializer(qs, many=True).data)
@@ -77,13 +69,9 @@ def user_list(request):
 
 
 @api_view(["GET", "PATCH", "DELETE"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAdmin])
 def user_detail(request, pk):
     """GET/PATCH/DELETE /api/admin/users/:id"""
-    denied = _require_admin(request)
-    if denied:
-        return denied
-
     try:
         user = User.objects.select_related("campus").get(pk=pk)
     except User.DoesNotExist:
@@ -106,13 +94,9 @@ def user_detail(request, pk):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAdmin])
 def reset_password(request, pk):
     """POST /api/admin/users/:id/reset-password — 管理員重設密碼"""
-    denied = _require_admin(request)
-    if denied:
-        return denied
-
     try:
         user = User.objects.get(pk=pk)
     except User.DoesNotExist:
@@ -139,3 +123,14 @@ def change_password(request):
     # 重新登入以維持 session
     login(request, user)
     return Response({"detail": "密碼已更新"})
+
+
+# ── CSRF 失敗（settings.CSRF_FAILURE_VIEW）──────────────────────────
+
+def csrf_failure(request, reason=""):
+    """Django CSRF middleware rejection as JSON instead of the default HTML page.
+
+    DRF views report CSRF problems through QipSessionAuthentication with the
+    same body, so the SPA sees one shape everywhere.
+    """
+    return JsonResponse({"detail": "CSRF verification failed.", "code": "csrf_failed"}, status=403)

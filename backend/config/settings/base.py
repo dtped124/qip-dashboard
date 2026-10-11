@@ -129,6 +129,12 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 100,
     "DATETIME_FORMAT": "%Y-%m-%dT%H:%M:%S%z",
+    # Session cookie only (no HTTP Basic). QipSessionAuthentication is DRF's
+    # SessionAuthentication plus a JSON `csrf_failed` code on CSRF failures.
+    "DEFAULT_AUTHENTICATION_CLASSES": ["apps.accounts.authentication.QipSessionAuthentication"],
+    # Deny by default: a view must opt out explicitly (see accounts/permissions.py).
+    "DEFAULT_PERMISSION_CLASSES": ["apps.accounts.permissions.IsAuthenticatedPasswordOK"],
+    "EXCEPTION_HANDLER": "apps.accounts.exceptions.exception_handler",
 }
 
 # CORS — allow Next.js frontend
@@ -150,6 +156,8 @@ SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_HTTPONLY = False   # 前端需讀取 CSRF token
+# JSON 403 {"detail", "code": "csrf_failed"} instead of Django's HTML page.
+CSRF_FAILURE_VIEW = "apps.accounts.views.csrf_failure"
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[
     "http://localhost:3000",
     "http://127.0.0.1:3000",

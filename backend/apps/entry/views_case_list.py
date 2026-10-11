@@ -9,9 +9,15 @@ POST /api/case-list/review-exclusion  — 品管中心審查排除
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.accounts.permissions import (
+    REVIEWER,
+    IsReporter,
+    IsReporterOrReviewer,
+    IsReviewer,
+    has_role,
+)
 from apps.entry.models import (
     CaseRecord,
     ExclusionReason,
@@ -31,7 +37,7 @@ def _mask_chart_no(chart_no: str, is_full: bool) -> str:
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReporterOrReviewer])
 def case_list(request):
     """
     GET /api/case-list/?indicator=HA03-01&campus=zhubei&year=115&month=3
@@ -61,8 +67,9 @@ def case_list(request):
 
     # 判斷是否顯示完整病歷號
     u = request.user
-    show_full = (u.is_reviewer or u.is_system_admin or u.is_staff
-                 or (u.campus and u.campus.code == campus_code))
+    # has_role() is also True for admin.
+    show_full = bool(has_role(u, REVIEWER)
+                     or (u.campus and u.campus.code == campus_code))
 
     records = CaseRecord.objects.filter(entry=entry).select_related(
         "excluded_by", "exclusion_reason"
@@ -109,7 +116,7 @@ def case_list(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReporter])
 def case_list_exclude(request):
     """
     POST /api/case-list/exclude
@@ -146,7 +153,7 @@ def case_list_exclude(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReporter])
 def case_list_restore(request):
     """POST /api/case-list/restore  body: {case_record_ids: [...]}"""
     ids = request.data.get("case_record_ids", [])
@@ -165,7 +172,7 @@ def case_list_restore(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReporterOrReviewer])
 def exclusion_reasons(request):
     """GET /api/case-list/exclusion-reasons"""
     reasons = ExclusionReason.objects.filter(is_active=True).order_by("sort_order")
@@ -174,17 +181,13 @@ def exclusion_reasons(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReviewer])
 def review_exclusion(request):
     """
     POST /api/case-list/review-exclusion
     body: {case_record_id, approved: bool, reviewer_note}
     品管中心審查排除是否合理
     """
-    u = request.user
-    if not (u.is_reviewer or u.is_system_admin or u.is_staff):
-        return Response({"detail": "需要審核者權限"}, status=status.HTTP_403_FORBIDDEN)
-
     record_id = request.data.get("case_record_id")
     approved = request.data.get("approved")
     note = request.data.get("reviewer_note", "")
