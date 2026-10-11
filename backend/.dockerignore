@@ -1,5 +1,8 @@
 __pycache__
 *.pyc
+# a bare name only matches in the context root; the apps' bytecode lives in nested directories
+**/__pycache__
+**/*.pyc
 .env
 .git
 .ruff_cache

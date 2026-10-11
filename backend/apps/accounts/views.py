@@ -2,6 +2,8 @@
 認證 API：登入、登出、取得當前使用者資訊、變更密碼
 帳號管理 API（系統管理員）
 """
+import functools
+
 from django.contrib.auth import login, logout, update_session_auth_hash
 from django.http import JsonResponse
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -10,12 +12,14 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
+from apps.accounts import password_throttle
 from apps.accounts.lockout import unlock_account
 from apps.accounts.models import User, UserRole
 from apps.accounts.passwords import generate_temporary_password
 from apps.accounts.permissions import IsAdmin
 from apps.accounts.serializers import (
     ChangePasswordSerializer,
+    CurrentUserSerializer,
     LoginSerializer,
     UserCreateSerializer,
     UserSerializer,
@@ -23,10 +27,20 @@ from apps.accounts.serializers import (
 )
 
 
-def _no_store(response: Response) -> Response:
-    """Keep a response that carries a one-time password out of browser and proxy caches."""
-    response["Cache-Control"] = "no-store"
-    return response
+def no_store(view):
+    """Answer every request of ``view`` (refusals and errors too) with ``Cache-Control: no-store``.
+
+    For endpoints that say who the caller is, list or change accounts, or hand out a one-time
+    password: neither a browser nor a proxy may keep a copy. Put it directly above ``@api_view``.
+    """
+
+    @functools.wraps(view)
+    def wrapper(request, *args, **kwargs):
+        response = view(request, *args, **kwargs)
+        response["Cache-Control"] = "no-store"
+        return response
+
+    return wrapper
 
 
 @api_view(["POST"])
@@ -44,7 +58,7 @@ def auth_login(request):
     user = serializer.validated_data["user"]
     # The same HttpRequest object django-axes tracked during authenticate().
     login(request._request, user)
-    return Response(UserSerializer(user).data)
+    return Response(CurrentUserSerializer(user).data)
 
 
 @api_view(["POST"])
@@ -55,18 +69,23 @@ def auth_logout(request):
     return Response({"detail": "已登出"})
 
 
-# Keep this decorator outermost (above api_view): it sets the csrftoken cookie
-# on this response, which the SPA reads to send X-CSRFToken on writes.
+# Keep ensure_csrf_cookie outermost (above no_store and api_view): it sets the csrftoken
+# cookie on this response, which the SPA reads to send X-CSRFToken on writes.
 @ensure_csrf_cookie
+@no_store
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def auth_me(request):
-    """GET /api/auth/me — 取得當前使用者資訊"""
-    return Response(UserSerializer(request.user).data)
+    """GET /api/auth/me — 取得當前使用者資訊（never cached: it answers "who is signed in")
+
+    ``roles`` are the effective ones: a Django superuser always includes ``admin`` (login answers alike).
+    """
+    return Response(CurrentUserSerializer(request.user).data)
 
 
 # ── 帳號管理（系統管理員）────────────────────────────────────────
 
+@no_store
 @api_view(["GET", "POST"])
 @permission_classes([IsAdmin])
 def user_list(request):
@@ -85,8 +104,7 @@ def user_list(request):
     payload = dict(UserSerializer(user).data)
     if serializer.temporary_password:
         payload["temporary_password"] = serializer.temporary_password
-    response = Response(payload, status=status.HTTP_201_CREATED)
-    return _no_store(response) if serializer.temporary_password else response
+    return Response(payload, status=status.HTTP_201_CREATED)
 
 
 def _self_demotion_error(user: User, changes: dict) -> Response | None:
@@ -106,6 +124,7 @@ def _self_demotion_error(user: User, changes: dict) -> Response | None:
     return None
 
 
+@no_store
 @api_view(["GET", "PATCH", "DELETE"])
 @permission_classes([IsAdmin])
 def user_detail(request, pk):
@@ -135,13 +154,16 @@ def user_detail(request, pk):
     return Response(UserSerializer(user).data)
 
 
+@no_store
 @api_view(["POST"])
 @permission_classes([IsAdmin])
 def reset_password(request, pk):
     """POST /api/admin/users/:id/reset-password — 管理員重設密碼
 
     Sets a random temporary password, flags the account ``must_change_password`` and lifts
-    its login lockout. The password is returned this once and is not logged or stored.
+    its login lockout and any change-password wait (the user has to change the password at their
+    next sign-in, which a wait left over from earlier guesses must not block). The password is
+    returned this once and is not logged or stored.
     Changing the password also ends every session the user has open.
     """
     try:
@@ -154,7 +176,8 @@ def reset_password(request, pk):
     user.must_change_password = True
     user.save(update_fields=["password", "must_change_password"])
     unlock_account(user.employee_id)
-    return _no_store(Response({"temporary_password": temporary_password}))
+    password_throttle.reset(user)
+    return Response({"temporary_password": temporary_password})
 
 
 @api_view(["POST"])
@@ -164,10 +187,20 @@ def change_password(request):
 
     Body: ``current_password``, ``new_password``. Open to a user who must change the
     password (plain IsAuthenticated); a successful change lifts that obligation.
+
+    Guess limit (password_throttle): after ``PASSWORD_CHANGE_FAILURE_LIMIT`` calls in a row that
+    do not prove the current password, the next one answers 429 ``too_many_attempts`` - even with
+    the right password - until ``PASSWORD_CHANGE_COOLOFF_MINUTES`` have passed.
     """
     user = request.user
+    password_throttle.register_attempt(user)  # raises the 429 before the body is even read
     serializer = ChangePasswordSerializer(data=request.data, context={"user": user})
-    serializer.is_valid(raise_exception=True)
+    try:
+        serializer.is_valid(raise_exception=True)
+    finally:
+        # Knowing the current password ends the streak, also when the new password is then refused.
+        if serializer.current_password_verified:
+            password_throttle.reset(user)
 
     user.set_password(serializer.validated_data["new_password"])
     user.must_change_password = False

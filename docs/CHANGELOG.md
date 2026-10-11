@@ -1,6 +1,55 @@
 # 更新日誌 (CHANGELOG)
 
-## 雲端化 P3 — 登入防護與密碼政策（2026-10-11，`feat/auth-hardening`）
+## 雲端化 P4 — 前端認證狀態與角色分流（2026-10-11，`feat/role-routing`）
+
+### ✨ 新功能 / 改進
+- **認證狀態集中到 `lib/auth/store.ts`**（zustand）：`/api/auth/me` 每次載入頁面只打一次（以前 `AuthGuard` 每換一頁就重打一次）；登入、改密碼後直接 `setUser`。`lib/http.ts` 的 `onAuthError` 終於有人用：`not_authenticated` → 清掉 session，`password_change_required` → 標記需改密碼，`permission_denied` **不會**清 session。取捨：角色只在載入時讀一次，管理員中途改了角色要重新整理才會反映在選單上（後端每次請求都以資料庫為準）
+- **路由守衛**（`AuthGuard` + `lib/auth/roles.ts` 的 `routeVerdict`）：未登入 → `/entry/login?next=<原頁>`；必須改密碼 → 登入頁的改密碼表單；頁面不屬於自己的角色 → 該角色的落地頁（`canAccess`／`homeFor`）；完全沒有角色 → 登出並導向 `/entry/login?reason=no_role`，登入頁顯示「此帳號尚未指派身分，請聯絡品管中心」。後端連不上時顯示「重試」而不是把人踢去登入頁。登入頁只接受站內、且該角色開得了的 `next`（擋掉 `//host`、`/.//host`、`/\host`、`/%2F%2Fhost`、登入頁本身）。登出進行中守衛不另做軟導頁，避免軟導頁先完成、舊頁面帶著前一位使用者的記憶體資料繼續存活
+- **角色分流**：看資料者 → `/`、填報者 → `/entry`、審核者 → `/entry/review`、管理員全部。`canAccess` 補洞：`/entry/*` 底下沒列出的路徑歸填報者（以前落到讀者桶）；`/mock/*` 在 production 對所有人（含 admin）關閉（導回落地頁），非 production 維持免登入
+- **帳號管理維持在 `/entry/admin`**，設定頁以「填報系統管理」卡進入。原計畫（D5）把帳號管理搬到設定頁底下的獨立頁，已由使用者撤銷，路由表不再列它、也沒有建那個頁面
+- **填報者極簡殼 `EntryShell`**：只有標題、姓名、登出，讀者多一個「回儀表板」、審核者多一個「填報審核」；沒有儀表板側欄、匯入、匯出、設定。範圍與 `canAccess` 的填報者範圍是同一個定義（`isEntryWorkspace`）：`/entry` 底下除了 `/entry/login`、`/entry/review*`、`/entry/admin*` 以外的所有路徑（`/entry/foo` 也是）；後兩者維持儀表板外框。「回儀表板」對所有讀者（viewer｜reviewer｜admin）顯示，reviewer 看得到是刻意的
+- **選單與按鈕依角色顯示**：側欄（季度分析、設定 → 讀者；匯入紀錄、標竿管理 → admin；新增「我的填報」→ 真正被指派為填報者的人；新增「填報審核」→ reviewer｜admin）、QIP 標題列（匯出要素清單 → 讀者；匯入資料 → admin）、達文西標題列（匯出 xlsx → reviewer｜admin；匯入 → admin）、設定頁卡片（新增「填報審核」卡）、挑戰目標值只有 admin 能編輯、審核頁標題列的連結
+- **達文西下鑽**：沒有個案權限（非 reviewer｜admin）的人，最後一層分組不可再點、沒有「直接看個案」，並提示「個案明細僅審核者／管理員可檢視」；不會呼叫 `cases/`
+- **首頁載入失敗依 `ApiError.code` 分流**：`permission_denied` → 「你的帳號沒有儀表板檢視權限，請聯絡品管中心」；`not_authenticated`／`password_change_required` 交給 `AuthGuard` 導頁；其他才是「無法連線後端」。QIP 與達文西的空狀態說明也依角色：只有 admin 被叫去點「匯入資料」，其他人看到「請聯絡品管中心」
+- 帳號未設定院區不再擋住 `/entry`（院區由指標負責人指派決定，只留提示）
+- `/entry/admin` 的「HIS 資料來源」不再連到 Django 後台（後台不經 Next 對外），只留說明文字
+- **後端 F2**：`POST /api/auth/change-password` 加次數限制（`PASSWORD_CHANGE_FAILURE_LIMIT`、`PASSWORD_CHANGE_COOLOFF_MINUTES`，預設 5／5，環境變數可覆寫）：同一使用者 5 分鐘內連續 5 次沒能證明目前密碼（以使用者 id 在 Django cache 計數），第 6 次起回 429 `too_many_attempts`（連正確密碼也一樣，不看 body）；被拒的呼叫不延長冷卻；證明了目前密碼（改密碼成功，或密碼對但新密碼被拒）就歸零。管理員重設密碼與 `seed_admin --reset` 也會清掉計數，否則使用者拿臨時密碼做強制改密碼時會被舊的猜測擋住。cache 連不上（Redis 掛掉）時放行並記 warning，不會 500。`REDIS_URL` 為空時 cache 改用行程內記憶體（以前 `base.py` 沒有這個 fallback）
+- **後端有效角色**：`/api/auth/me` 與登入回應的 `roles` 是有效角色，Django 超級使用者一律含 `admin`（只改輸出，不寫回資料庫；帳號管理畫面仍顯示資料庫裡存的角色）。以前 `roles` 為空的 superuser 通過所有後端檢查，卻會被前端當成沒有角色而登出
+- **後端 F9**：`/api/auth/me` 與所有 `/api/admin/users*` 的回應（含錯誤與 403）帶 `Cache-Control: no-store`
+- `backend/.dockerignore` 加上 `**/__pycache__`、`**/*.pyc`：原本的 `__pycache__`、`*.pyc` 只比對建置根目錄，各 app 底下的位元碼照樣進映像
+
+### 🔐 安全性
+- 刪除 `public/sample.xls` 與首頁的「載入範例資料」按鈕：真實院內資料不該放在可公開下載的位置（`lib/http.ts` 的 `fetchPublicFile` 也一併移除）；`public/` 底下其餘的真實資料檔已另行移到 `local-data/`（被 `.gitignore` 擋住，不再由 Next 對外提供）
+- change-password 的猜密碼限制（F2）：被盜的 session 不能再拿此端點猜目前密碼；計數在 cache 裡，多 worker 部署請設 `REDIS_URL`
+- 登入後導向（`?next=`）的開放導向防護：只接受站內單斜線路徑。實測抓到的繞法：`/.//evil.com` 經 URL 解析會正規化成 `//evil.com`，所以正規化之後的路徑也要再檢查一次
+- 前端的選單只是「顯示什麼」，真正的權限仍由後端把關（P2）
+
+### 🐛 修正
+- 清掉既有的 6 個 lint 錯誤（未使用的 `router`／`reportId`／`HeadingLevel`／`noBorders`、`maskSmallNumerators` 補 eslint-disable、`app/import/page.tsx` 把三元式當陳述句），`npx next lint` 回到 0 錯誤（只剩 3 個既有警告）；寫法同 `cd6d6f4`
+
+### 📁 修改檔案
+| 檔案 | 修改內容 |
+|------|---------|
+| `lib/auth/store.ts`（新）、`lib/auth/useLogout.ts`（新） | 認證狀態、`ensureLoaded` 去重、`onAuthError` 接線；`signOut`（失敗也繼續）→ `clear()` → 整頁重載登入頁，可帶 `reason=no_role` |
+| `lib/auth/roles.ts`、`lib/auth/roles.test.ts`（新） | `canAccess` 補 `/entry/*` 規則、移除不存在的帳號管理頁、`/mock` 在 production 關閉；新增 `canSeeDavinciCases`、`hasAssignedRole`、`isPublicPath`、`isEntryWorkspace`、`routeVerdict`、`safeNextPath`；58 條單元測試 |
+| `package.json`、`tsconfig.json` | `test:unit` 指令；`allowImportingTsExtensions`（測試檔以 `.ts` 副檔名 import） |
+| `components/layout/AuthGuard.tsx` | 改成讀 store 的純函式守衛，不再每換頁打 API |
+| `components/layout/EntryShell.tsx`（新）、`components/layout/ClientLayout.tsx` | 填報者極簡殼；外框選擇 |
+| `components/layout/{Sidebar,Header}.tsx`、`app/davinci/components/{DavinciHeader,DrilldownPanel}.tsx`、`app/settings/page.tsx`、`app/entry/review/page.tsx`、`app/entry/admin/page.tsx`、`components/detail/TargetPanel.tsx` | 依角色顯示 |
+| `app/entry/login/page.tsx`、`app/entry/page.tsx`、`app/page.tsx`、`app/davinci/page.tsx`、`lib/http.ts` | 登入頁走 store、`next`、`reason`；填報首頁改用 store；首頁錯誤分流、空狀態依角色、移除範例資料；移除 `fetchPublicFile` |
+| `app/entry/{[category],case-list/[indicator]}/page.tsx` | 外層不再自帶 `min-h-screen`（殼負責整頁高度） |
+| `backend/apps/accounts/password_throttle.py`（新）、`views.py`、`serializers.py`、`management/commands/seed_admin.py` | F2 次數限制（含重設清除、fail-open）；F9 `no_store`；有效角色 |
+| `backend/config/settings/base.py`、`backend/.env.example`、`backend/.dockerignore` | `PASSWORD_CHANGE_*`、`REDIS_URL` 為空時的 LocMem fallback；dockerignore |
+| `backend/conftest.py`（新）、`backend/apps/accounts/tests/test_auth_followups.py`（新） | 所有測試改用行程內 cache（不碰 Redis）；F2、F9、有效角色的 41 條測試 |
+| `public/sample.xls`（刪除） | 見安全性 |
+
+### ✅ 測試
+- 後端 `apps/accounts/tests` 289 條全綠（P3 的 248 條 + 41 條新測試）；F2 的冷卻期用假時鐘推進，不 sleep
+- 前端 `npm run test:unit`（`node --test lib/auth/*.test.ts`）58 條全綠：`canAccess`（七種角色組合 × 代表路徑）、`homeFor`、`routeVerdict`、`safeNextPath`（含 `//evil.com`、`/.//evil.com`、`https://evil.com`、`/\evil.com`、`/%2F%2Fevil.com`，另有 20 萬筆隨機輸入）。需要 Node 22.18 以上（內建 TypeScript 型別剝除，不用建置）；因此 `roles.ts` 不能有執行期 import，只能 `import type`
+
+---
+
+## 雲端化 P3 — 登入防護與密碼政策（2026-10-11，`feat/auth-hardening`，PR #9）
 
 ### ✨ 新功能 / 改進
 - **登入鎖定**（django-axes 8.3.1）：同一帳號連續失敗 5 次鎖 5 分鐘（`AXES_FAILURE_LIMIT`、`AXES_COOLOFF_MINUTES`）；從第 5 次失敗起回 429 `locked`，訊息中的分鐘數取自設定；鎖定期間的嘗試不延長鎖定；登入成功會重置；重設密碼、`seed_admin --reset`、`manage.py axes_reset_username` 都能解鎖；Django 後台登入共用同一個計數

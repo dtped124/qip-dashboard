@@ -19,6 +19,9 @@ import type {
   DavinciSpcSummary,
 } from './lib/types';
 import { useDavinciStore } from './lib/store';
+import { useAuthStore } from '@/lib/auth/store';
+import { ApiError } from '@/lib/http';
+import { isAdmin } from '@/lib/auth/roles';
 import { DAVINCI_COLOR, resolvePeriodValue } from './lib/ui';
 import { IndicatorCard } from './components/IndicatorCard';
 import { MatrixView, TableView } from './components/Views';
@@ -32,6 +35,7 @@ export default function DavinciPage() {
   const mode = useDavinciStore(s => s.mode);
   const setMode = useDavinciStore(s => s.setMode);
   const dataVersion = useDavinciStore(s => s.dataVersion);
+  const roles = useAuthStore(s => s.user?.roles);
 
   const [meta, setMeta] = useState<DavinciMeta | null>(null);
   const [view, setView] = useState<ViewMode>('card');
@@ -41,10 +45,13 @@ export default function DavinciPage() {
   const [selectedPeriod, setSelectedPeriod] = useState<DavinciPeriodKey | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Backend error code of the last failed load; decides which screen to show (mirrors app/page.tsx).
+  const [errorCode, setErrorCode] = useState<string | undefined>(undefined);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setErrorCode(undefined);
     try {
       const [m, result] = await Promise.all([
         meta ? Promise.resolve(meta) : fetchDavinciMeta(),
@@ -60,6 +67,7 @@ export default function DavinciPage() {
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setErrorCode(e instanceof ApiError ? e.code : undefined);
     } finally {
       setLoading(false);
     }
@@ -95,8 +103,19 @@ export default function DavinciPage() {
     );
   }
 
-  // API 錯誤（鏡射 QIP 首頁）
+  // API 錯誤（鏡射 QIP 首頁）：依後端 code 分流，不能一律說「無法連線後端」
   if (error && groups.length === 0) {
+    // AuthGuard handles these two by redirecting; render nothing meanwhile.
+    if (errorCode === 'not_authenticated' || errorCode === 'password_change_required') return null;
+    if (errorCode === 'permission_denied') {
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-center">
+          <div className="text-amber-500 text-4xl mb-4">⚠</div>
+          <h2 className="text-xl font-bold text-gray-800 mb-2">沒有檢視權限</h2>
+          <p className="text-sm text-gray-500 max-w-md">你的帳號沒有達文西儀表板的檢視權限，請聯絡品管中心。</p>
+        </div>
+      );
+    }
     return (
       <div className="flex flex-col items-center justify-center h-full text-center">
         <div className="text-red-500 text-4xl mb-4">⚠</div>
@@ -119,8 +138,9 @@ export default function DavinciPage() {
         <FileSpreadsheet size={64} className="text-gray-300 mb-4" />
         <h2 className="text-xl font-bold text-gray-800 mb-2">尚無 {campus} 院區的達文西資料</h2>
         <p className="text-sm text-gray-500 mb-6 max-w-md">
-          請點擊右上角「匯入資料」按鈕，上傳達文西申報 Excel 檔案（.xlsx），
-          系統會自動去重、清洗並計算七項指標。
+          {isAdmin(roles)
+            ? '請點擊右上角「匯入資料」按鈕，上傳達文西申報 Excel 檔案（.xlsx），系統會自動去重、清洗並計算七項指標。'
+            : '尚無資料，請聯絡品管中心匯入。'}
         </p>
       </div>
     );

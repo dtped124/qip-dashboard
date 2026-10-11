@@ -97,13 +97,24 @@ DATABASES = {
     }
 }
 
-# Cache — Redis
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": env("REDIS_URL", default="redis://localhost:6379/1"),
+# Cache — Redis when REDIS_URL is set. Empty or unset: per-process memory (LocMem), which is fine for one
+# process (and for tests) but keeps separate counters per worker, so give a multi-worker deployment a Redis.
+# Today the cache only holds the change-password attempt counters (apps/accounts/password_throttle.py).
+REDIS_URL = env("REDIS_URL", default="")
+if REDIS_URL:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": REDIS_URL,
+        }
     }
-}
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "qip-default",
+        }
+    }
 
 # Celery
 CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://localhost:6379/2")
@@ -230,6 +241,18 @@ AXES_LOCKOUT_CALLABLE = "apps.accounts.lockout.axes_lockout_response"
 # and a spoofed value would give each attempt a fresh counter and defeat the lock.
 AXES_IPWARE_PROXY_COUNT = env.int("AXES_IPWARE_PROXY_COUNT", default=0)
 AXES_IPWARE_META_PRECEDENCE_ORDER = env.list("AXES_IPWARE_META_PRECEDENCE_ORDER", default=["REMOTE_ADDR"])
+
+# POST /api/auth/change-password asks for the current password, so it needs its own guess limit (axes only
+# watches the login). A signed-in user may call it PASSWORD_CHANGE_FAILURE_LIMIT times in a row without proving
+# the current password; the next call, right password or not, is refused with 429 ``too_many_attempts`` until
+# PASSWORD_CHANGE_COOLOFF_MINUTES have passed. Counted per user id in the cache (apps/accounts/password_throttle.py).
+PASSWORD_CHANGE_FAILURE_LIMIT = env.int("PASSWORD_CHANGE_FAILURE_LIMIT", default=5)
+if PASSWORD_CHANGE_FAILURE_LIMIT < 1:
+    raise ImproperlyConfigured("PASSWORD_CHANGE_FAILURE_LIMIT must be at least 1")
+PASSWORD_CHANGE_COOLOFF_MINUTES = env.int("PASSWORD_CHANGE_COOLOFF_MINUTES", default=5)
+if PASSWORD_CHANGE_COOLOFF_MINUTES < 1:
+    # A zero window would expire every counter at once and the limit could never trigger.
+    raise ImproperlyConfigured("PASSWORD_CHANGE_COOLOFF_MINUTES must be at least 1")
 
 # Applies to the API (change-password, account creation, seed_admin) and the Django admin.
 AUTH_PASSWORD_VALIDATORS = [

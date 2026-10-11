@@ -3,10 +3,12 @@
 import { useDashboardStore } from '@/lib/store/dashboardStore';
 import { CATEGORY_ORDER, CATEGORY_COLORS } from '@/lib/constants';
 import { Campus } from '@/lib/types';
-import { Building2, ChevronLeft, ChevronRight, Upload, Settings, BarChart3, CalendarRange, Bot } from 'lucide-react';
+import { Building2, ChevronLeft, ChevronRight, Upload, Settings, BarChart3, CalendarRange, Bot, ClipboardList, ClipboardCheck } from 'lucide-react';
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { useAuthStore } from '@/lib/auth/store';
+import { canViewDashboard, hasAssignedRole, hasRole, isAdmin } from '@/lib/auth/roles';
 
 export function Sidebar() {
   const campus = useDashboardStore(s => s.campus);
@@ -18,6 +20,12 @@ export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
+  const roles = useAuthStore(s => s.user?.roles);
+  // 選單只決定「顯示什麼」；真正的權限由後端把關
+  const canRead = canViewDashboard(roles);
+  const admin = isAdmin(roles);
+  const reporter = hasAssignedRole(roles, 'reporter'); // admin 不隱含：「我的填報」是填報者本人的工作區
+  const reviewer = hasRole(roles, 'reviewer');
 
   const campusOptions: Campus[] = ['竹北', '竹東', '新竹'];
 
@@ -139,52 +147,86 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* 底部功能連結 */}
+      {/* 底部功能連結（依角色顯示） */}
       <div className="border-t border-gray-200 py-2">
-        <Link
-          href="/cross-campus"
-          className={`w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
-            pathname === '/cross-campus'
-              ? 'bg-blue-50 text-blue-700 font-medium'
-              : 'text-gray-600 hover:bg-gray-50'
-          }`}
-        >
-          <CalendarRange size={16} className="shrink-0" />
-          {!collapsed && '季度分析'}
-        </Link>
-        <Link
-          href="/import"
-          className={`w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
-            pathname === '/import'
-              ? 'bg-blue-50 text-blue-700 font-medium'
-              : 'text-gray-600 hover:bg-gray-50'
-          }`}
-        >
-          <Upload size={16} className="shrink-0" />
-          {!collapsed && '匯入紀錄'}
-        </Link>
-        <Link
-          href="/settings/tcpi"
-          className={`w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
-            pathname === '/settings/tcpi'
-              ? 'bg-blue-50 text-blue-700 font-medium'
-              : 'text-gray-600 hover:bg-gray-50'
-          }`}
-        >
-          <BarChart3 size={16} className="shrink-0" />
-          {!collapsed && '標竿管理'}
-        </Link>
-        <Link
-          href="/settings"
-          className={`w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
-            pathname.startsWith('/settings') && pathname !== '/settings/tcpi'
-              ? 'bg-blue-50 text-blue-700 font-medium'
-              : 'text-gray-600 hover:bg-gray-50'
-          }`}
-        >
-          <Settings size={16} className="shrink-0" />
-          {!collapsed && '設定'}
-        </Link>
+        {canRead && (
+          <Link
+            href="/cross-campus"
+            className={`w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
+              pathname === '/cross-campus'
+                ? 'bg-blue-50 text-blue-700 font-medium'
+                : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <CalendarRange size={16} className="shrink-0" />
+            {!collapsed && '季度分析'}
+          </Link>
+        )}
+        {admin && (
+          <Link
+            href="/import"
+            className={`w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
+              pathname === '/import'
+                ? 'bg-blue-50 text-blue-700 font-medium'
+                : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <Upload size={16} className="shrink-0" />
+            {!collapsed && '匯入紀錄'}
+          </Link>
+        )}
+        {admin && (
+          <Link
+            href="/settings/tcpi"
+            className={`w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
+              pathname === '/settings/tcpi'
+                ? 'bg-blue-50 text-blue-700 font-medium'
+                : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <BarChart3 size={16} className="shrink-0" />
+            {!collapsed && '標竿管理'}
+          </Link>
+        )}
+        {reporter && (
+          <Link
+            href="/entry"
+            className={`w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
+              pathname === '/entry'
+                ? 'bg-blue-50 text-blue-700 font-medium'
+                : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <ClipboardList size={16} className="shrink-0" />
+            {!collapsed && '我的填報'}
+          </Link>
+        )}
+        {reviewer && (
+          <Link
+            href="/entry/review"
+            className={`w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
+              pathname.startsWith('/entry/review')
+                ? 'bg-blue-50 text-blue-700 font-medium'
+                : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <ClipboardCheck size={16} className="shrink-0" />
+            {!collapsed && '填報審核'}
+          </Link>
+        )}
+        {canRead && (
+          <Link
+            href="/settings"
+            className={`w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
+              pathname.startsWith('/settings') && pathname !== '/settings/tcpi'
+                ? 'bg-blue-50 text-blue-700 font-medium'
+                : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <Settings size={16} className="shrink-0" />
+            {!collapsed && '設定'}
+          </Link>
+        )}
       </div>
     </aside>
   );

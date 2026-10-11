@@ -6,7 +6,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { useParams, useRouter, useSearchParams } from 'next/navigation'
+import { useParams, useSearchParams } from 'next/navigation'
 import {
   approveCategory,
   editEntry,
@@ -181,7 +181,6 @@ function ReviewIndicatorRow({
 export default function ReviewDetailPage() {
   const params = useParams()
   const searchParams = useSearchParams()
-  const router = useRouter()
 
   const campusCode = params.campus as string
   const categoryCode = (params.category as string).toUpperCase()

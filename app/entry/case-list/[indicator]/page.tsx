@@ -221,7 +221,7 @@ export default function CaseListPage() {
   })
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div>
       <header className="bg-white border-b px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Link href={`/entry/${indicatorCode.split('-')[0]}`} className="text-gray-400 hover:text-gray-600 text-sm">

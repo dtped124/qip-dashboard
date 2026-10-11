@@ -11,13 +11,15 @@
 用法:
   SEED_ADMIN_PASSWORD=... python manage.py seed_admin           # 不存在才建，已存在則跳過（exit 0）
   SEED_ADMIN_PASSWORD=... python manage.py seed_admin --reset   # 重設已存在的 admin：新密碼、啟用、
-                                                                #   補回管理員身分、清除登入鎖定
+                                                                #   補回管理員身分、清除登入鎖定與
+                                                                #   變更密碼的嘗試次數
   python manage.py seed_admin --password "..." [--reset]        # 直接指定密碼
 """
 import os
 
 from django.core.management.base import BaseCommand, CommandError
 
+from apps.accounts import password_throttle
 from apps.accounts.lockout import unlock_account
 from apps.accounts.models import User, UserRole
 from apps.accounts.passwords import password_problems
@@ -78,6 +80,7 @@ class Command(BaseCommand):
 
         if existing:
             unlock_account(EMPLOYEE_ID)
+            password_throttle.reset(user)  # also forget a change-password wait left over from earlier guesses
             self.stdout.write(self.style.SUCCESS(
                 f"[OK] 已重設管理員 '{EMPLOYEE_ID}' 的密碼並清除登入鎖定；下次登入須先變更密碼"
             ))

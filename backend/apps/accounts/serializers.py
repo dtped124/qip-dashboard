@@ -46,10 +46,15 @@ class ChangePasswordSerializer(serializers.Serializer):
     current_password = serializers.CharField(write_only=True, trim_whitespace=False, style={"input_type": "password"})
     new_password = serializers.CharField(write_only=True, trim_whitespace=False, style={"input_type": "password"})
 
+    # Set by validate(): the caller knew the current password (even if the new one is then refused).
+    # The view reads it to forget the attempt count (password_throttle.reset).
+    current_password_verified = False
+
     def validate(self, data):
         user = self.context["user"]
         if not user.check_password(data["current_password"]):
             raise serializers.ValidationError({"current_password": ["目前密碼不正確"]})
+        self.current_password_verified = True
         if data["new_password"] == data["current_password"]:
             raise serializers.ValidationError({"new_password": ["新密碼不得與目前密碼相同"]})
         problems = password_problems(data["new_password"], user)
@@ -88,6 +93,26 @@ class UserSerializer(serializers.ModelSerializer):
             "must_change_password",
         ]
         read_only_fields = fields
+
+
+class CurrentUserSerializer(UserSerializer):
+    """The signed-in user as the SPA sees them (login and /api/auth/me): ``roles`` are the *effective* ones.
+
+    A Django superuser passes every backend role check (``permissions.is_admin``) even when ``roles`` is
+    empty, so the SPA has to be told ``admin`` - otherwise it would treat such an account as having no role
+    and sign it out. Only the output changes; the stored list is left alone, and the account administration
+    endpoints keep showing it exactly as stored.
+    """
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Always a clean list: a malformed stored value (e.g. a bare string written through the
+        # Django admin) must not make the SPA grant or deny menus by accident.
+        roles = sorted(instance.role_set())
+        if instance.is_superuser and UserRole.ADMIN.value not in roles:
+            roles.append(UserRole.ADMIN.value)
+        data["roles"] = roles
+        return data
 
 
 class UserCreateSerializer(serializers.ModelSerializer):

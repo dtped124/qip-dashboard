@@ -8,6 +8,8 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { finalizeMonth, getReviewOverview } from '@/lib/entry/api'
 import type { ReviewCampusRow, ReviewOverviewResponse } from '@/lib/entry/api'
+import { useAuthStore } from '@/lib/auth/store'
+import { hasAssignedRole, isAdmin } from '@/lib/auth/roles'
 
 const STATUS_CONFIG: Record<string, { emoji: string; label: string; className: string }> = {
   unfilled:  { emoji: '⬜', label: '未填',   className: 'bg-gray-50 text-gray-400' },
@@ -18,12 +20,11 @@ const STATUS_CONFIG: Record<string, { emoji: string; label: string; className: s
 }
 
 function StatusCell({
-  campusCode, categoryCode, status, reportId, year, month,
+  campusCode, categoryCode, status, year, month,
 }: {
   campusCode: string
   categoryCode: string
   status: string
-  reportId: number | null
   year: number
   month: number
 }) {
@@ -81,7 +82,6 @@ function CampusRow({
             campusCode={campus.campus_code}
             categoryCode={cat.code}
             status={c?.status ?? 'unfilled'}
-            reportId={c?.report_id ?? null}
             year={year}
             month={month}
           />
@@ -105,6 +105,7 @@ function CampusRow({
 }
 
 export default function ReviewOverviewPage() {
+  const roles = useAuthStore((s) => s.user?.roles)
   const [overview, setOverview] = useState<ReviewOverviewResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -155,8 +156,13 @@ export default function ReviewOverviewPage() {
           <p className="text-xs text-gray-500">{year} 年 {month} 月</p>
         </div>
         <div className="flex items-center gap-3">
-          <Link href="/entry" className="text-sm text-gray-500 hover:underline">填報首頁</Link>
-          <Link href="/entry/admin" className="text-sm text-gray-500 hover:underline">系統設定</Link>
+          {/* 填報首頁是填報者本人的工作區（admin 不隱含）；系統設定只有管理員進得去 */}
+          {hasAssignedRole(roles, 'reporter') && (
+            <Link href="/entry" className="text-sm text-gray-500 hover:underline">填報首頁</Link>
+          )}
+          {isAdmin(roles) && (
+            <Link href="/entry/admin" className="text-sm text-gray-500 hover:underline">系統設定</Link>
+          )}
         </div>
       </header>
 

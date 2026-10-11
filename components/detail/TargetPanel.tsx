@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { Target, Check, X } from 'lucide-react';
 import { loadIndicatorMeta, updateIndicatorTarget } from '@/lib/api';
+import { useAuthStore } from '@/lib/auth/store';
+import { isAdmin } from '@/lib/auth/roles';
 import type { IndicatorUnit } from '@/lib/types';
 
 interface Props {
@@ -20,6 +22,8 @@ const UNIT_SUFFIX: Record<IndicatorUnit, string> = {
 };
 
 export function TargetPanel({ code, unit, onChange }: Props) {
+  // 只有管理員能改目標值（後端 PATCH 同規則）；其他人只看數值
+  const canEdit = isAdmin(useAuthStore(s => s.user?.roles));
   const [enabled, setEnabled] = useState(false);
   const [value, setValue] = useState<string>('');
   const [editing, setEditing] = useState(false);
@@ -110,7 +114,9 @@ export function TargetPanel({ code, unit, onChange }: Props) {
             </span>
           )}
 
-          {editing ? (
+          {!canEdit ? (
+            !enabled && <span className="text-xs text-gray-400">未啟用</span>
+          ) : editing ? (
             <div className="flex items-center gap-2">
               <input
                 type="number"

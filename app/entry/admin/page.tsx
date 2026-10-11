@@ -147,15 +147,11 @@ export default function AdminPage() {
               <p className="text-sm font-medium text-gray-800">📋 指標負責人指派</p>
               <p className="text-xs text-gray-500 mt-0.5">設定指標 × 院區 × 負責人</p>
             </Link>
-            <a
-              href="/admin/entry/datasourceconfig/"
-              target="_blank"
-              rel="noreferrer"
-              className="block border rounded-lg p-3 hover:bg-gray-50 transition-colors"
-            >
+            {/* 沒有連結：Django 後台不經 Next 對外開放，這格只留說明 */}
+            <div className="border rounded-lg p-3 bg-gray-50">
               <p className="text-sm font-medium text-gray-800">🔌 HIS 資料來源</p>
               <p className="text-xs text-gray-500 mt-0.5">預留 HIS 串接設定（待實作）</p>
-            </a>
+            </div>
           </div>
         </div>
 
