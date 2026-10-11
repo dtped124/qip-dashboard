@@ -31,8 +31,8 @@ class ReportCategoryAdmin(admin.ModelAdmin):
 
 @admin.register(IndicatorAssignment)
 class IndicatorAssignmentAdmin(admin.ModelAdmin):
-    list_display = ("indicator_code", "campus", "user", "role", "effective_from", "effective_to")
-    list_filter = ("campus", "role")
+    list_display = ("indicator_code", "campus", "user", "role", "field", "effective_from", "effective_to")
+    list_filter = ("campus", "role", "field")
     search_fields = ("indicator_code", "user__employee_id", "user__full_name")
     ordering = ("indicator_code", "campus")
 

@@ -5,13 +5,10 @@ confirm_import_batch：ImportBatch status=preview → confirmed，
 將 IndicatorDataPoint 寫入 IndicatorEntry。
 處理資料來源衝突（§9.3）。
 """
-from decimal import Decimal
-
 from django.db import transaction
 from django.utils import timezone
 
 from apps.entry.models import (
-    Campus,
     DataSource,
     ImportBatch,
     ImportBatchStatus,
@@ -20,24 +17,12 @@ from apps.entry.models import (
     ReportCategory,
     ReportStatus,
 )
+from apps.entry.services.values import compute_value
 from apps.indicators.models import Indicator
 
 
 def _category_code_from_indicator(indicator_code: str) -> str:
     return indicator_code.split("-")[0]
-
-
-def _calc_value(numerator, denominator, unit: str, has_denominator: bool):
-    if not has_denominator:
-        return numerator
-    if numerator is None or denominator is None or denominator == 0:
-        return None
-    val = numerator / denominator
-    if unit == "percent":
-        val *= 100
-    elif unit == "permille":
-        val *= 1000
-    return round(val, 6)
 
 
 @transaction.atomic
@@ -149,8 +134,10 @@ def write_preview_entries(batch: ImportBatch, data_points: list, confirmed_by) -
         except Indicator.DoesNotExist:
             unit, has_den = "percent", True
 
-        value = _calc_value(dp.numerator, dp.denominator, unit, has_den)
+        value = compute_value(dp.numerator, dp.denominator, has_den, unit)
 
+        # The importer is who "filled" every field the file supplied a number for.
+        now = timezone.now()
         IndicatorEntry.objects.update_or_create(
             report=report,
             indicator_code=dp.indicator_code,
@@ -162,6 +149,10 @@ def write_preview_entries(batch: ImportBatch, data_points: list, confirmed_by) -
                 "data_source": DataSource.HIS if batch.source_type == "his" else DataSource.EXCEL,
                 "import_batch": batch,
                 "filled_by": confirmed_by,
-                "filled_at": timezone.now(),
+                "filled_at": now,
+                "numerator_filled_by": confirmed_by if dp.numerator is not None else None,
+                "numerator_filled_at": now if dp.numerator is not None else None,
+                "denominator_filled_by": confirmed_by if dp.denominator is not None else None,
+                "denominator_filled_at": now if dp.denominator is not None else None,
             },
         )

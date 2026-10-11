@@ -11,6 +11,7 @@ class IndicatorSerializer(serializers.ModelSerializer):
             "data_nature", "is_quarterly", "is_active",
             "campuses", "aliases", "formula", "description",
             "target_mode", "target_value",
+            "has_denominator", "entry_mode",
         ]
 
 

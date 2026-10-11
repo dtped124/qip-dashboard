@@ -338,6 +338,8 @@ class IndicatorAssignment(models.Model):
     user             = FK(User, related_name="assignments")
     role             = CharField(choices=AssignmentRole,
                                  default=PRIMARY)          # primary/deputy
+    field            = CharField(choices=AssignmentField,
+                                 default=BOTH)             # both/numerator/denominator（P5 欄位級指派）
     effective_from   = DateField()
     effective_to     = DateField(null=True)                # null = 現行有效
     created_by       = FK(User, null=True,
@@ -349,7 +351,9 @@ class IndicatorAssignment(models.Model):
         indexes = [Index(fields=["indicator_code", "campus", "effective_to"])]
 ```
 
-> **生效邏輯**：查詢現行負責人時 filter `effective_from <= today AND (effective_to IS NULL OR effective_to > today)`。
+> **生效邏輯**：某個月份「有效」＝ `effective_from <= 該月最後一天 AND (effective_to IS NULL OR effective_to >= 該月第一天)`（`services/assignments.py` 的 `active_assignments`，填報端所有查詢共用）。
+>
+> **欄位級指派（P5）**：`field` 決定這筆指派負責分子、分母或兩者；舊資料 migrate 後為 `both`。同一 (指標, 院區, 使用者) 同時只能有一筆涵蓋某個欄位的現行指派（`effective_to IS NULL`），由 serializer 驗證。
 
 ---
 
@@ -409,6 +413,11 @@ class IndicatorEntry(models.Model):
     filled_by          = FK(User, null=True,
                             related_name="filled_entries")
     filled_at          = DateTimeField(null=True)
+    # P5：分子、分母各自是誰填的（filled_by/at 仍是整筆的最後修改者；審核者修改不動這四個欄位）
+    numerator_filled_by   = FK(User, null=True, on_delete=SET_NULL, related_name="+")
+    numerator_filled_at   = DateTimeField(null=True)
+    denominator_filled_by = FK(User, null=True, on_delete=SET_NULL, related_name="+")
+    denominator_filled_at = DateTimeField(null=True)
     data_source        = CharField(choices=DataSource,
                                    default=MANUAL)            # manual/excel/his
     import_batch       = FK("ImportBatch", null=True)

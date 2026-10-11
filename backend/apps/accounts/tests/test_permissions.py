@@ -21,6 +21,7 @@ ran and rejected the empty request), and so is the deliberate 501 of the HIS pla
 """
 from __future__ import annotations
 
+import datetime
 import io
 import json
 import re
@@ -38,6 +39,7 @@ from apps.davinci.models import DavinciCase
 from apps.entry.models import (
     Campus,
     CaseRecord,
+    IndicatorAssignment,
     IndicatorEntry,
     MonthlyReport,
     ReportCategory,
@@ -560,8 +562,13 @@ def test_entry_benchmarks_serves_the_tcpi_payload(viewer, client_for):
 
 
 class TestCaseListPatientNumberMasking:
-    """Full chart numbers: reviewer/admin, or a reporter of the campus in question.
-    The Django is_staff flag must not widen that."""
+    """Who reads a case list, and who sees the full chart numbers in it.
+
+    Reviewers and admins read every case list. A reporter reads the ones of indicators assigned to them
+    (any field) at that campus in that month, and then sees the chart numbers in full; everybody else is
+    refused outright. The account's own ``campus`` column and the Django is_staff flag decide nothing.
+    (Detailed cases: apps/entry/tests/test_submit_and_review.py::TestCaseListReads.)
+    """
 
     @pytest.fixture
     def url(self):
@@ -572,24 +579,41 @@ class TestCaseListPatientNumberMasking:
         CaseRecord.objects.create(entry=entry, case_role="numerator", his_raw_data={"chart_no": "A123456789"})
         return "/api/case-list/?indicator=HA03-01&campus=zhubei&year=115&month=3"
 
+    def assign(self, user, code="HA03-01", campus="zhubei"):
+        return IndicatorAssignment.objects.create(
+            indicator_code=code, campus=Campus.objects.get(code=campus), user=user,
+            effective_from=datetime.date(2026, 1, 1),
+        )
+
     def chart_no(self, client, url) -> str:
         resp = client.get(url)
         assert resp.status_code == 200, resp.content
         return resp.json()["records"][0]["his_raw_data"]["chart_no"]
 
-    def test_reporter_of_another_campus_sees_it_masked(self, url, make_user, client_for):
-        hsinchu = Campus.objects.create(code="hsinchu", name="新竹", benchmark_level="medical_center")
-        other = make_user("t_rep_other", ["reporter"], campus=hsinchu)
-        assert self.chart_no(client_for(other), url) == "A********9"
+    def test_a_reporter_without_an_assignment_is_refused_even_on_the_same_campus(self, url, make_user, client_for):
+        resident = make_user("t_rep_resident", ["reporter"], campus=Campus.objects.get(code="zhubei"))
+        resp = client_for(resident).get(url)
+        assert resp.status_code == 403
+        assert body(resp)["code"] == "not_assigned"
+        assert b"A123456789" not in resp.content
 
-    def test_staff_flag_does_not_unmask(self, url, make_user, client_for):
-        hsinchu = Campus.objects.create(code="hsinchu", name="新竹", benchmark_level="medical_center")
-        staff_reporter = make_user("t_rep_staff", ["reporter"], campus=hsinchu, is_staff=True)
-        assert self.chart_no(client_for(staff_reporter), url) == "A********9"
+    def test_staff_flag_does_not_open_it(self, url, make_user, client_for):
+        staff_reporter = make_user("t_rep_staff", ["reporter"], is_staff=True)
+        resp = client_for(staff_reporter).get(url)
+        assert resp.status_code == 403
+        assert body(resp)["code"] == "not_assigned"
 
-    def test_reporter_of_the_same_campus_sees_it_in_full(self, url, make_user, client_for):
-        own = make_user("t_rep_own", ["reporter"], campus=Campus.objects.get(code="zhubei"))
+    def test_a_reporter_assigned_at_the_campus_sees_it_in_full(self, url, make_user, client_for):
+        hsinchu = Campus.objects.create(code="hsinchu", name="新竹", benchmark_level="medical_center")
+        own = make_user("t_rep_own", ["reporter"], campus=hsinchu)  # the account's campus is somewhere else
+        self.assign(own)
         assert self.chart_no(client_for(own), url) == "A123456789"
+
+    def test_an_assignment_at_another_campus_does_not_help(self, url, make_user, client_for):
+        Campus.objects.create(code="hsinchu", name="新竹", benchmark_level="medical_center")
+        other = make_user("t_rep_other", ["reporter"], campus=Campus.objects.get(code="zhubei"))
+        self.assign(other, campus="hsinchu")
+        assert client_for(other).get(url).status_code == 403
 
     def test_reviewer_and_admin_see_it_in_full(self, url, reviewer, admin_account, client_for):
         assert self.chart_no(client_for(reviewer), url) == "A123456789"

@@ -8,8 +8,6 @@
 - edit_entry           ─ 核准後直接修改數值（留 audit log）
 - finalize_campus      ─ 送出至醫策會（所有面向 approved → finalized）
 """
-from decimal import Decimal, InvalidOperation
-
 from django.db import transaction
 from django.utils import timezone
 
@@ -21,8 +19,8 @@ from apps.entry.models import (
     ReportCategory,
     ReportStatus,
 )
+from apps.entry.services.values import compute_value, parse_number, uses_sub_entries, value_fits
 from apps.indicators.models import Indicator
-
 
 # ── 全景矩陣 ─────────────────────────────────────────────────
 
@@ -100,7 +98,7 @@ def get_review_detail(campus: Campus, year: int, month: int, category_code: str)
     # 指標數據
     entries = list(
         IndicatorEntry.objects.filter(report=report)
-        .select_related("filled_by")
+        .select_related("filled_by", "numerator_filled_by", "denominator_filled_by")
         .prefetch_related("audit_logs__changed_by")
         .order_by("indicator_code")
     )
@@ -167,6 +165,12 @@ def get_review_detail(campus: Campus, year: int, month: int, category_code: str)
             "data_source": entry.data_source,
             "filled_by": entry.filled_by.full_name if entry.filled_by else None,
             "filled_at": entry.filled_at.isoformat() if entry.filled_at else None,
+            "numerator_filled_by": entry.numerator_filled_by.full_name if entry.numerator_filled_by else None,
+            "numerator_filled_at": entry.numerator_filled_at.isoformat() if entry.numerator_filled_at else None,
+            "denominator_filled_by": entry.denominator_filled_by.full_name if entry.denominator_filled_by else None,
+            "denominator_filled_at": (
+                entry.denominator_filled_at.isoformat() if entry.denominator_filled_at else None
+            ),
             "prev_value": prev_val,
             "change_pct": change_pct,
             "is_anomaly": is_anomaly,
@@ -239,68 +243,101 @@ def reject_category(reviewer, campus: Campus, year: int, month: int,
 
 # ── 品管中心直接修改數值 ─────────────────────────────────────
 
+def _fail(error: str, code: str) -> dict:
+    return {"ok": False, "error": error, "code": code}
+
+
+def _text(value) -> str:
+    """A stored value as text for the audit log (zero is "0", only NULL is empty)."""
+    return "" if value is None else str(value)
+
+
 @transaction.atomic
-def edit_entry(reviewer, entry_id: int, field: str, new_value: str, reason: str) -> dict:
+def edit_entry(reviewer, entry_id: int, field: str, new_value, reason: str) -> dict:
     """
     §8.3 PATCH /api/review/edit-entry
     允許欄位：numerator, denominator, value, note
+
+    KD5: reviewers are not limited by field assignment, but they may only change a report that is
+    ``submitted`` or ``approved`` (while it is a draft the reporters own it, and their autosave would
+    overwrite the edit). The numerator_filled_by / denominator_filled_by attribution is left alone: it
+    keeps saying who entered the number. For an indicator with a denominator ``value`` is derived and
+    cannot be edited directly; the value is always recomputed with services.values.compute_value. The numerator
+    (and with it the value) of HA10-01 at Hsinchu is the sum of its sub-categories and cannot be edited either.
     """
     allowed_fields = {"numerator", "denominator", "value", "note"}
     if field not in allowed_fields:
-        return {"ok": False, "error": f"不可修改欄位：{field}"}
+        return _fail(f"不可修改欄位：{field}", "field_not_editable")
 
     try:
-        entry = IndicatorEntry.objects.select_related("report__campus", "report__category").get(pk=entry_id)
+        report_id = IndicatorEntry.objects.values_list("report_id", flat=True).get(pk=entry_id)
     except IndicatorEntry.DoesNotExist:
-        return {"ok": False, "error": "找不到指標數據"}
+        return _fail("找不到指標數據", "entry_not_found")
 
-    if entry.report.status == ReportStatus.FINALIZED:
-        return {"ok": False, "error": "已送出的資料不可修改"}
+    # Same lock order as save_draft: the report first, then the entry.
+    report = MonthlyReport.objects.select_for_update(of=("self",)).select_related("campus").get(pk=report_id)
+    entry = IndicatorEntry.objects.select_for_update().get(pk=entry_id)
 
-    old_value = str(getattr(entry, field) or "")
+    if report.status == ReportStatus.FINALIZED:
+        return _fail("已送出的資料不可修改", "report_finalized")
+    if report.status not in (ReportStatus.SUBMITTED, ReportStatus.APPROVED):
+        return _fail(f"月報目前為 {report.status}，仍在填報中，只有已送審或已核准的月報可由品管中心修改",
+                     "report_not_editable")
 
-    try:
-        if field in ("numerator", "denominator", "value"):
-            setattr(entry, field, Decimal(str(new_value)) if new_value else None)
-        else:
-            setattr(entry, field, new_value)
-    except (InvalidOperation, ValueError):
-        return {"ok": False, "error": f"數值格式錯誤：{new_value}"}
+    if field in ("numerator", "value") and uses_sub_entries(entry.indicator_code, report.campus.code):
+        # HA10-01 at Hsinchu: the numerator is the sum of 13 sub-categories. An override here would be undone by
+        # the reporter's next save, and the reviewer has no endpoint to edit the sub-categories themselves.
+        return _fail("此指標（新竹 HA10-01）的分子由 13 類子項加總，不能直接修改分子或計算值；"
+                     "請修改子項（可退回給填報者修正）", "field_not_editable")
 
-    # 重新計算 value（如果改了 numerator 或 denominator）
-    if field in ("numerator", "denominator"):
+    indicator = Indicator.objects.filter(code=entry.indicator_code).first()
+    has_den = indicator.has_denominator if indicator else True
+    unit = indicator.unit if indicator else "percent"
+
+    target = field
+    if field == "value":
+        if has_den:
+            return _fail("此指標的計算值由分子與分母算出，請修改分子或分母", "value_not_editable")
+        target = "numerator"  # without a denominator the value is the numerator
+    elif field == "denominator" and not has_den:
+        return _fail("此指標沒有分母", "no_denominator")
+
+    old_value = getattr(entry, target)
+    if target == "note":
+        setattr(entry, "note", "" if new_value is None else str(new_value))
+    else:
+        blank = new_value is None or (isinstance(new_value, str) and not new_value.strip())
         try:
-            ind = Indicator.objects.get(code=entry.indicator_code)
-            unit = ind.unit
-            has_den = ind.has_denominator
-        except Indicator.DoesNotExist:
-            unit, has_den = "percent", True
+            setattr(entry, target, None if blank else parse_number(new_value))
+        except ValueError:
+            return _fail(f"數值格式錯誤：{new_value}", "invalid_number")
 
-        num = entry.numerator
-        den = entry.denominator
-        if num is not None and has_den and den and den != 0:
-            val = num / den
-            if unit == "percent":
-                val *= 100
-            elif unit == "permille":
-                val *= 1000
-            entry.value = round(val, 6)
-        elif not has_den and num is not None:
-            entry.value = num
+    update_fields = [target]
+    if target in ("numerator", "denominator"):
+        value = compute_value(entry.numerator, entry.denominator, has_den, unit)
+        if not value_fits(value):
+            return _fail("計算值超出可儲存範圍，請確認分子與分母", "value_out_of_range")
+        entry.value = value
+        update_fields.append("value")
+    entry.save(update_fields=update_fields)
 
-    entry.save()
-
-    # Audit log
+    # Audit log (the columns are 100 characters wide; a long note is cut for the log only)
     EntryAuditLog.objects.create(
         entry=entry,
-        field_name=field,
-        old_value=old_value,
-        new_value=str(getattr(entry, field) or ""),
+        field_name=target,
+        old_value=_text(old_value)[:100],
+        new_value=_text(getattr(entry, target))[:100],
         changed_by=reviewer,
         reason=reason,
     )
 
-    return {"ok": True, "entry_id": entry.id, "field": field, "new_value": str(getattr(entry, field) or "")}
+    return {
+        "ok": True,
+        "entry_id": entry.id,
+        "field": field,
+        "new_value": _text(getattr(entry, target)),
+        "value": _text(entry.value),
+    }
 
 
 # ── 送出至醫策會 ────────────────────────────────────────────
@@ -342,11 +379,12 @@ def unlock_month(admin_user, campus: Campus, year: int, month: int, reason: str)
     reports = MonthlyReport.objects.filter(
         campus=campus, year=year, month=month, status=ReportStatus.FINALIZED
     )
-    if not reports.exists():
+    # update() returns the number of rows it changed; counting the queryset afterwards would
+    # always say 0 because the status filter no longer matches.
+    unlocked = reports.update(status=ReportStatus.APPROVED, finalized_at=None, finalized_by=None)
+    if not unlocked:
         return {"ok": False, "error": "找不到已送出的報表"}
-
-    reports.update(status=ReportStatus.APPROVED, finalized_at=None, finalized_by=None)
-    return {"ok": True, "unlocked_count": reports.count()}
+    return {"ok": True, "unlocked_count": unlocked}
 
 
 # ── 私有輔助 ─────────────────────────────────────────────────
