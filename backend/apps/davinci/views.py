@@ -11,6 +11,11 @@
     GET  /api/davinci/cases/           個案明細（遮罩後）
     GET  /api/davinci/export/          匯出 xlsx（與儀表板同一計算路徑）
     GET  /api/davinci/meta/            指標定義 + 代碼表（前端初始化）
+
+Permissions (apps/accounts/permissions.py; admin passes every check):
+    meta, indicators, series, drilldown   dashboard readers (viewer | reviewer | admin): aggregates only
+    cases, export                         reviewer | admin: case-level rows (account number, surgeon)
+    import, import/confirm, import/logs   admin
 """
 from __future__ import annotations
 
@@ -22,7 +27,7 @@ from django.core.files.base import ContentFile
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from openpyxl import Workbook
 
-from apps.accounts.permissions import require_admin, require_readers
+from apps.accounts.permissions import REVIEWER, require_admin, require_readers, require_roles
 
 from .constants import (
     ADVERSE_EVENT_CODES,
@@ -149,7 +154,7 @@ def import_confirm(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"data": {"log_id": log.id, **stats}})
 
 
-@require_readers
+@require_admin
 def import_logs(request: HttpRequest) -> JsonResponse:
     """GET /api/davinci/import/logs/ — 匯入紀錄（分頁格式依技術堆疊規範）"""
     page_size = 20
@@ -438,7 +443,7 @@ def drilldown(request: HttpRequest) -> JsonResponse:
     })
 
 
-@require_readers
+@require_roles(REVIEWER)  # row-level data: viewers only get the aggregates
 def case_list(request: HttpRequest) -> JsonResponse:
     """GET /api/davinci/cases?campus=&period=[&dept=&surgeon=&order=&code=]
 
@@ -505,7 +510,7 @@ def case_list(request: HttpRequest) -> JsonResponse:
 
 # ── 匯出 ──
 
-@require_readers
+@require_roles(REVIEWER)  # 2nd sheet lists every case: same rule as case_list
 def export_xlsx(request: HttpRequest) -> HttpResponse:
     """GET /api/davinci/export/?campus=竹北 — 匯出指標值 + 個案明細。
 

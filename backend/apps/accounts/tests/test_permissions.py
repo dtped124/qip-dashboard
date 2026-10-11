@@ -21,6 +21,7 @@ ran and rejected the empty request), and so is the deliberate 501 of the HIS pla
 """
 from __future__ import annotations
 
+import io
 import json
 import re
 
@@ -29,9 +30,11 @@ from django.contrib.auth.models import AnonymousUser
 from django.http import HttpResponse
 from django.urls import URLResolver, get_resolver
 from django.urls.resolvers import RoutePattern
+from openpyxl import load_workbook
 
 from apps.accounts.models import User, UserRole
 from apps.accounts.permissions import has_role, is_admin, require_roles
+from apps.davinci.models import DavinciCase
 from apps.entry.models import (
     Campus,
     CaseRecord,
@@ -177,15 +180,15 @@ MATRIX: list[tuple[str, str, frozenset[str]]] = [
     ("POST", "/api/case-list/restore", REPORTERS),
     ("GET", "/api/case-list/exclusion-reasons", REPORTER_OR_REVIEWER),
     ("POST", "/api/case-list/review-exclusion", REVIEWERS),
-    # davinci: readers read, admin imports
+    # davinci: readers see aggregates, reviewer|admin see case-level rows, admin imports
     ("POST", "/api/davinci/import/", ADMIN_ONLY),
     ("POST", "/api/davinci/import/confirm/", ADMIN_ONLY),
-    ("GET", "/api/davinci/import/logs/", READERS),
+    ("GET", "/api/davinci/import/logs/", ADMIN_ONLY),
     ("GET", "/api/davinci/indicators/", READERS),
     ("GET", "/api/davinci/indicators/<str:code>/series/", READERS),
     ("GET", "/api/davinci/drilldown/", READERS),
-    ("GET", "/api/davinci/cases/", READERS),
-    ("GET", "/api/davinci/export/", READERS),
+    ("GET", "/api/davinci/cases/", REVIEWERS),
+    ("GET", "/api/davinci/export/", REVIEWERS),
     ("GET", "/api/davinci/meta/", READERS),
 ]
 
@@ -325,6 +328,55 @@ def test_viewer_cannot_reach_case_lists(viewer, client_for):
     client = client_for(viewer)
     assert client.get("/api/case-list/").status_code == 403
     assert client.get("/api/case-list/exclusion-reasons").status_code == 403
+
+
+# Davinci: the cases list and the xlsx export (2nd sheet) are row-level data - account
+# number, surgeon name - so they are reviewer | admin. Aggregates stay open to viewers.
+DAVINCI_CASES = "/api/davinci/cases/?campus=竹北&period=202601"
+DAVINCI_EXPORT = "/api/davinci/export/?campus=竹北"
+DAVINCI_ROW_LEVEL = pytest.mark.parametrize("url", [DAVINCI_CASES, DAVINCI_EXPORT], ids=["cases", "export"])
+
+
+@pytest.fixture
+def davinci_case():
+    return DavinciCase.objects.create(
+        campus="竹北", period=202601, account="ACC-0001", dept_name="婦產科", surgeon="王醫師",
+        op_time_min=100.0, blood_ml=10.0,
+    )
+
+
+@DAVINCI_ROW_LEVEL
+def test_viewer_is_refused_davinci_case_level_data(url, davinci_case, viewer, client_for):
+    resp = client_for(viewer).get(url)
+    assert resp.status_code == 403
+    assert body(resp)["code"] == "permission_denied"
+    assert b"ACC-0001" not in resp.content
+
+
+@DAVINCI_ROW_LEVEL
+@pytest.mark.parametrize("who", ["reviewer", "admin"])
+def test_reviewer_and_admin_are_let_in_to_davinci_case_level_data(url, who, davinci_case, accounts, client_for):
+    resp = client_for(accounts[who]).get(url)
+    assert let_in(resp)
+    assert resp.status_code == 200
+    if url == DAVINCI_CASES:
+        assert [c["account"] for c in resp.json()["data"]] == ["ACC-0001"]
+    else:
+        sheet = load_workbook(io.BytesIO(resp.content))["個案明細"]
+        assert "ACC-0001" in {cell.value for row in sheet.iter_rows() for cell in row}
+
+
+def test_viewer_still_sees_davinci_aggregates(davinci_case, viewer, client_for):
+    client = client_for(viewer)
+    for url in (
+        "/api/davinci/meta/",
+        "/api/davinci/indicators/?campus=竹北",
+        "/api/davinci/indicators/DV04/series/?campus=竹北",
+    ):
+        assert client.get(url).status_code == 200, url
+    drilldown = client.get("/api/davinci/drilldown/?code=DV04&campus=竹北&period=202601&by=dept")
+    assert drilldown.status_code == 200
+    assert [(r["key"], r["denominator"]) for r in drilldown.json()["data"]] == [("婦產科", 1)]
 
 
 class TestRoleHelpers:

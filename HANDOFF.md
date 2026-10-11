@@ -1,13 +1,11 @@
-# HANDOFF 2026-10-11 17:05
+# HANDOFF 2026-10-11 17:40
 - 任務：qip-dashboard 上雲＋角色分流（8 phase，一 phase 一 branch）。計畫檔：`C:\Users\akcho\.claude\plans\streamed-weaving-spindle.md`；拍板決策見記憶 `project_cloud_role_rollout.md`。
 - 已完成：
   - **P1 `feat/same-origin-api`**（已合併 master `987abc5`，已推 origin）：`lib/http.ts` 統一 HTTP client、Next rewrites 代理 `/api/*`、前端全改相對路徑、Django `USE_X_FORWARDED_HOST`、TCPI POST 改讀 `request.data`。
-  - **P2 `feat/backend-permissions`**（**PR #8 開著，等使用者 review／merge**：https://github.com/dtped124/qip-dashboard/pull/8）：`viewer` 角色、`apps/accounts/{permissions,exceptions,authentication}.py`、DRF 預設需登入、57 條 `/api/` 路由逐一掛權限、移除 imports/davinci 的 `csrf_exempt`、entry-benchmarks 500 與壞檔上傳 500 修正、`lib/auth/roles.ts`（`homeFor`/`canAccess`）、登入頁依角色導頁。測試 130 條（含 resolver 列舉的 meta-test）。fresh agent 審查通過，其建議已以第二個 commit 補上（`{detail,code}` 的 code 透傳、無角色帳號登入即登出、壞檔 guard 加 KeyError/ValueError、models 角色 helper 容錯、docs）。
+  - **P2 `feat/backend-permissions`**（**PR #8 開著，等使用者 review／merge**：https://github.com/dtped124/qip-dashboard/pull/8）：`viewer` 角色、`apps/accounts/{permissions,exceptions,authentication}.py`、DRF 預設需登入、57 條 `/api/` 路由逐一掛權限、移除 imports/davinci 的 `csrf_exempt`、entry-benchmarks 500 與壞檔上傳 500 修正、`lib/auth/roles.ts`（`homeFor`/`canAccess`）、登入頁依角色導頁。測試 130 條（含 resolver 列舉的 meta-test）。fresh agent 審查通過，其建議已以第二個 commit 補上、達文西逐案端點收緊為第三個 commit（`{detail,code}` 的 code 透傳、無角色帳號登入即登出、壞檔 guard 加 KeyError/ValueError、models 角色 helper 容錯、docs）。
   - 基準：`pytest -q` 有 1 個既有失敗 `test_control_chart.py::test_binomial_rare_event_returns_imr`（SPC 圖型規則，非本案）；davinci 63 OK。
 - 下一步：**P3 `feat/auth-hardening`**——必須疊在 P2 之上（用到 permissions.py）。若 PR #8 未合併就開工，從 `feat/backend-permissions` 開分支、PR base 先指向它。內容：django-axes（5 次/15 分）、密碼驗證器、重設密碼改隨機臨時密碼＋`must_change_password`、`_passes_base_gate` 加改密碼閘門、seed_admin 讀 `SEED_ADMIN_PASSWORD`、start.bat 不印密碼、serializer roles 白名單、不可降自己權限。
-- 待使用者決定：
-  1. **viewer 能否看達文西逐案資料**（`/api/davinci/cases` 等含未遮罩 `account`、醫師姓名）？目前依矩陣：所有 davinci GET 對 viewer 開放；QIP 個案清單則擋 viewer。若要收緊，把 davinci 的逐案／import-logs 端點改 reviewer|admin。
-  2. dev DB 有 1 個 reporter-only 帳號，P2 後看不到儀表板，要不要補 `viewer`。
+- 已決定（2026-10-11）：viewer 只看彙總——達文西 `cases/`、`export/`（含個案明細）限 reviewer|admin，`import/logs/` 限 admin；`drilldown/`、`series/` 維持讀者（viewer 仍可篩到分母 1 的小格，若要擋需做小格抑制，未做）。dev DB 的 reporter 帳號已加 viewer。**P3 等 PR #8 合併後再從 master 開分支，不疊 stacked PR。**
 - 已知缺口（計畫內，後續 phase 處理）：強制改密碼閘門（P3）；列層級授權——reporter 可對任意 case id 排除/還原、review 不限院區（P5）；前端非 admin 仍看得到匯入／目標值／TCPI 儲存等按鈕，按了 403（P4）；`app/page.tsx` 把 403 顯示成「無法連線後端」（P4）；`/entry/<非HAxx>` 在 `canAccess` 落到讀者桶（P4 確認）。
 - 事故紀錄：P1 驗證時誤清 40 筆 TCPI 標竿，已自 `../qip-portable/public/data/qip-export.json`（2026-10-09）還原；備份 scratchpad `tcpi-backup-40rows.json`。**寫入驗證一律 test client 回滾或先備份。**
 - 環境：根目錄 `docker compose up -d`（postgres 5433 / redis 6380 / api 8001，自動重載）；前端 `preview_start qip-dev`（3000）；測試 `docker compose exec -T api pytest -q -p no:cacheprovider`。測試帳號用 `seed_admin` 預設值（P3 會移除）。

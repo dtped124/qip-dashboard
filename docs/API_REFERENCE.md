@@ -559,8 +559,11 @@ DRF 端點的其他例外（404、405 等）也會多一個 `code`；欄位驗�
 |------|---------|
 | `POST /api/auth/login` | 匿名（唯一豁免 CSRF 的端點） |
 | `/api/auth/me`、`logout`、`change-password` | 已登入即可（含尚未指派角色者） |
-| `GET /api/v1/dashboard/`、`GET /api/v1/indicators/`、`GET /api/v1/indicators/{code}/`（含 `data`、`alerts`、`summaries`、`analysis`）、`GET /api/v1/tcpi/`、`GET /api/v1/indicators/export/element-list/`、`GET /api/dashboard/entry-data`、`entry-benchmarks`、`/api/davinci/*` 的 GET | 讀者 |
-| `PATCH /api/v1/indicators/{code}/`、`POST /api/v1/tcpi/`、`GET /api/v1/indicators/export/`（全量匯出）、`/api/v1/imports/*`、`POST /api/davinci/import/`、`import/confirm/` | admin |
+| `GET /api/v1/dashboard/`、`GET /api/v1/indicators/`、`GET /api/v1/indicators/{code}/`（含 `data`、`alerts`、`summaries`、`analysis`）、`GET /api/v1/tcpi/`、`GET /api/v1/indicators/export/element-list/`、`GET /api/dashboard/entry-data`、`entry-benchmarks` | 讀者 |
+| `PATCH /api/v1/indicators/{code}/`、`POST /api/v1/tcpi/`、`GET /api/v1/indicators/export/`（全量匯出）、`/api/v1/imports/*` | admin |
+| `GET /api/davinci/meta/`、`indicators/`、`indicators/{code}/series/`、`drilldown/`（彙總，不含逐案） | 讀者 |
+| `GET /api/davinci/cases/`、`export/`（逐案明細：帳號、醫師姓名；xlsx 第二個工作表） | reviewer |
+| `POST /api/davinci/import/`、`import/confirm/`、`GET /api/davinci/import/logs/` | admin |
 | `/api/entry/*` | reporter |
 | `GET /api/case-list/`、`GET /api/case-list/exclusion-reasons` | reporter / reviewer |
 | `POST /api/case-list/exclude`、`restore` | reporter |
