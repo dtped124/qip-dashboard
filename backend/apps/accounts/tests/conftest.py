@@ -26,6 +26,9 @@ def make_user(db):
     """make_user("t_x", ["viewer"], is_staff=True) -> saved User (no usable password)."""
 
     def _make(employee_id: str, roles: list[str] | None = None, **extra) -> User:
+        # The model defaults to must_change_password=True; the matrix tests want
+        # plain, fully usable accounts unless a test says otherwise.
+        extra.setdefault("must_change_password", False)
         # UserManager.create_user() takes `username`; this project's login id is employee_id.
         return User.objects.create_user(
             username=employee_id,

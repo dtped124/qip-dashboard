@@ -108,7 +108,7 @@ function firstString(value: unknown): string | undefined {
 /**
  * Turn a failed response body into { message, code }. Formats used by this
  * backend, in priority order:
- *   {"detail": "..."}                              DRF APIException
+ *   {"detail": "..."}                              DRF APIException (+ optional "code")
  *   {"non_field_errors": ["..."]}                  DRF serializer validation
  *   {"error": {"code": "...", "message": "..."}}   custom JsonResponse
  *   {"error": "SOME_CODE"}                         custom JsonResponse (short form)
@@ -124,7 +124,11 @@ function describeError(body: unknown, status: number): { message: string; code?:
     return msg ? { message: msg } : fallback
   }
 
-  if (typeof body.detail === 'string' && body.detail) return { message: body.detail }
+  if (typeof body.detail === 'string' && body.detail) {
+    // The backend's DRF handler adds a machine-readable `code` next to `detail`.
+    const code = typeof body.code === 'string' && body.code ? body.code : undefined
+    return { message: body.detail, code }
+  }
 
   const nonField = firstString(body.non_field_errors)
   if (nonField) return { message: nonField }

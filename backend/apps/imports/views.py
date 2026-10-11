@@ -31,9 +31,11 @@ def upload_excel(request):
         return _bad_file("檔案是空的")
     try:
         parse_result = parse_qip_excel(file_bytes, uploaded.name)
-    except (BadZipFile, XLRDError) as exc:
-        # Not a readable .xlsx (zip container) / .xls (BIFF) workbook. Only the
-        # open/parse step is guarded; nothing has been saved at this point.
+    except (BadZipFile, XLRDError, KeyError, ValueError) as exc:
+        # Not a readable .xlsx (zip container) / .xls (BIFF) workbook. openpyxl
+        # raises KeyError for a zip that is not OOXML and ValueError for other
+        # malformed content. Only the open/parse step is guarded; nothing has
+        # been saved at this point.
         return _bad_file(f"無法讀取 Excel 檔案，請確認檔案格式：{exc}")
     log = save_import_results(parse_result, uploaded.name, len(file_bytes))
 

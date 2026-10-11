@@ -51,21 +51,30 @@ class User(AbstractUser):
     def __str__(self):
         return f"{self.employee_id} {self.full_name}"
 
+    def role_set(self) -> set[str]:
+        """Roles as a clean set; a malformed JSON value (None, a string, ...) counts as no roles."""
+        roles = self.roles
+        if not isinstance(roles, (list, tuple)):
+            return set()
+        return {r for r in roles if isinstance(r, str)}
+
     def has_role(self, role: str) -> bool:
-        return role in self.roles
+        """Plain membership. For authorization use apps.accounts.permissions (admin implies all)."""
+        return role in self.role_set()
 
     @property
     def is_reporter(self) -> bool:
-        return UserRole.REPORTER in self.roles
+        return UserRole.REPORTER in self.role_set()
 
     @property
     def is_reviewer(self) -> bool:
-        return UserRole.REVIEWER in self.roles
+        return UserRole.REVIEWER in self.role_set()
 
     @property
     def is_system_admin(self) -> bool:
-        return UserRole.ADMIN in self.roles
+        """Same rule as permissions.is_admin(): the admin role or a Django superuser."""
+        return self.is_superuser or UserRole.ADMIN in self.role_set()
 
     @property
     def is_viewer(self) -> bool:
-        return UserRole.VIEWER in self.roles
+        return UserRole.VIEWER in self.role_set()

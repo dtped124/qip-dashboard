@@ -1,9 +1,13 @@
-# HANDOFF 2026-10-11 16:10
+# HANDOFF 2026-10-11 17:05
 - 任務：qip-dashboard 上雲＋角色分流（8 phase，一 phase 一 branch）。計畫檔：`C:\Users\akcho\.claude\plans\streamed-weaving-spindle.md`；拍板決策見記憶 `project_cloud_role_rollout.md`。
-- 已完成：**P1 `feat/same-origin-api`**——`lib/http.ts` 統一 HTTP client（cookie + CSRF + 錯誤解析 + 下載）、`next.config.mjs` 以 rewrites 代理 `/api/*`（`API_INTERNAL_URL`，build 時固化）、前端全部改相對路徑、Django `USE_X_FORWARDED_HOST`（base.py，env 可關）、`auth_me` 發 csrftoken、TCPI POST 改讀 `request.data`。
-  驗證：`next build` 通過；curl 經 proxy：尾斜線 GET 200 無轉址、登入 200、無 CSRF 的 POST 403、有 CSRF 200、PATCH target 200；瀏覽器：登入→儀表板 36 卡、匯出要素清單 200、達文西頁 200；TCPI POST 以 Django test client 在回滾交易內驗 403/200/400。fresh agent 審查退回的兩點（caller headers 可蓋 CSRF、env 空字串）已修。
-- 下一步：**P2 `feat/backend-permissions`**（從 master 開分支）：新增 `viewer` 角色、`apps/accounts/permissions.py`、DRF 預設 `IsAuthenticated`、移除 `csrf_exempt`、權限矩陣逐端點、`test_permissions.py`。上線前先盤點既有帳號補 viewer。
-  P2 順手修：`imports/views.py` 上傳非 Excel 會 500（BadZipFile 未捕捉，直打 8001 亦同，非 P1 造成）。
-- 卡點 / 事故：P1 驗證時用 curl 回寫 TCPI，端點是「先全刪再新增」，Git Bash 文字管線把中文弄成 surrogate 致新增失敗，**40 筆 TCPI 標竿被清空**；已從 `../qip-portable/public/data/qip-export.json`（2026-10-09 匯出）還原 40 筆並核對中文正常。備份：scratchpad `tcpi-backup-40rows.json`。教訓已寫 `~/.claude/agent-ops/LESSONS.md`（2026-10-11）。**之後任何寫入驗證一律用 test client 回滾或先備份。**
-- 相關檔案：`lib/http.ts`、`next.config.mjs`、`backend/config/settings/base.py`、`backend/apps/indicators/views.py`（tcpi_benchmarks）、`.env.local`（已移除 NEXT_PUBLIC_API_URL；設了會繞過代理）。
-- 環境：根目錄 `docker compose up -d`（postgres 5433 / redis 6380 / api 8001）；前端 `preview_start qip-dev`（3000）。測試帳號用 `seed_admin` 的預設值（P3 會移除寫死密碼）。
+- 已完成：
+  - **P1 `feat/same-origin-api`**（已合併 master `987abc5`，已推 origin）：`lib/http.ts` 統一 HTTP client、Next rewrites 代理 `/api/*`、前端全改相對路徑、Django `USE_X_FORWARDED_HOST`、TCPI POST 改讀 `request.data`。
+  - **P2 `feat/backend-permissions`**（**PR #8 開著，等使用者 review／merge**：https://github.com/dtped124/qip-dashboard/pull/8）：`viewer` 角色、`apps/accounts/{permissions,exceptions,authentication}.py`、DRF 預設需登入、57 條 `/api/` 路由逐一掛權限、移除 imports/davinci 的 `csrf_exempt`、entry-benchmarks 500 與壞檔上傳 500 修正、`lib/auth/roles.ts`（`homeFor`/`canAccess`）、登入頁依角色導頁。測試 130 條（含 resolver 列舉的 meta-test）。fresh agent 審查通過，其建議已以第二個 commit 補上（`{detail,code}` 的 code 透傳、無角色帳號登入即登出、壞檔 guard 加 KeyError/ValueError、models 角色 helper 容錯、docs）。
+  - 基準：`pytest -q` 有 1 個既有失敗 `test_control_chart.py::test_binomial_rare_event_returns_imr`（SPC 圖型規則，非本案）；davinci 63 OK。
+- 下一步：**P3 `feat/auth-hardening`**——必須疊在 P2 之上（用到 permissions.py）。若 PR #8 未合併就開工，從 `feat/backend-permissions` 開分支、PR base 先指向它。內容：django-axes（5 次/15 分）、密碼驗證器、重設密碼改隨機臨時密碼＋`must_change_password`、`_passes_base_gate` 加改密碼閘門、seed_admin 讀 `SEED_ADMIN_PASSWORD`、start.bat 不印密碼、serializer roles 白名單、不可降自己權限。
+- 待使用者決定：
+  1. **viewer 能否看達文西逐案資料**（`/api/davinci/cases` 等含未遮罩 `account`、醫師姓名）？目前依矩陣：所有 davinci GET 對 viewer 開放；QIP 個案清單則擋 viewer。若要收緊，把 davinci 的逐案／import-logs 端點改 reviewer|admin。
+  2. dev DB 有 1 個 reporter-only 帳號，P2 後看不到儀表板，要不要補 `viewer`。
+- 已知缺口（計畫內，後續 phase 處理）：強制改密碼閘門（P3）；列層級授權——reporter 可對任意 case id 排除/還原、review 不限院區（P5）；前端非 admin 仍看得到匯入／目標值／TCPI 儲存等按鈕，按了 403（P4）；`app/page.tsx` 把 403 顯示成「無法連線後端」（P4）；`/entry/<非HAxx>` 在 `canAccess` 落到讀者桶（P4 確認）。
+- 事故紀錄：P1 驗證時誤清 40 筆 TCPI 標竿，已自 `../qip-portable/public/data/qip-export.json`（2026-10-09）還原；備份 scratchpad `tcpi-backup-40rows.json`。**寫入驗證一律 test client 回滾或先備份。**
+- 環境：根目錄 `docker compose up -d`（postgres 5433 / redis 6380 / api 8001，自動重載）；前端 `preview_start qip-dev`（3000）；測試 `docker compose exec -T api pytest -q -p no:cacheprovider`。測試帳號用 `seed_admin` 預設值（P3 會移除）。

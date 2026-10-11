@@ -6,9 +6,9 @@
 - **基礎網址**：`http://localhost:8000`（dev）
 - **認證方式**：Session-based（Django 內建）+ CSRF Token
   - `POST /api/auth/login` 豁免 CSRF（首次登入無 cookie）
-  - 其他 POST 請求需帶 `X-CSRFToken` header
+  - 其他所有寫入（POST / PUT / PATCH / DELETE）需帶 `X-CSRFToken` header
 - **回應格式**：JSON
-- **錯誤格式**：`{"error": {"code": "...", "message": "..."}}`
+- **錯誤格式**：認證／權限／CSRF 錯誤為 `{"detail": "...", "code": "..."}`（見文末）；業務錯誤為 `{"error": {"code": "...", "message": "..."}}` 或 DRF 的欄位錯誤
 
 ---
 
@@ -531,8 +531,8 @@ HIS 系統推送 webhook（預留）
 
 ### 常見錯誤代碼
 - `BAD_REQUEST` (400) — 參數錯誤
-- `UNAUTHORIZED` (401) — 未登入
-- `FORBIDDEN` (403) — 權限不足
+- `BAD_FILE` (400) — 上傳的檔案無法解析為 Excel
+- 未登入／權限不足／CSRF：一律 403，見下節（不會回 401）
 - `NOT_FOUND` (404) — 資源不存在
 - `METHOD_NOT_ALLOWED` (405) — HTTP method 錯
 - `CONFLICT` (409) — 狀態衝突（如重複送審）

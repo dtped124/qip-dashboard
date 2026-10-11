@@ -36,7 +36,9 @@ REPORTER = UserRole.REPORTER.value
 REVIEWER = UserRole.REVIEWER.value
 VIEWER = UserRole.VIEWER.value
 
-# Who may read dashboards and indicator data (admin is implied by has_role).
+# Who may read dashboards and indicator data. Deliberately excludes admin:
+# never authorize with `role in DASHBOARD_READERS`; go through has_role(),
+# which lets admin through.
 DASHBOARD_READERS: tuple[str, ...] = (VIEWER, REVIEWER)
 
 _NOT_AUTHENTICATED = "Authentication credentials were not provided."
@@ -90,8 +92,9 @@ def _passes_base_gate(user) -> bool:
 class IsAuthenticatedPasswordOK(BasePermission):
     """Default for every DRF view: a signed-in, active user (any role, or none).
 
-    This is the hook for the forced-password-change gate; see
-    ``_passes_base_gate``. The role classes below inherit from it.
+    Despite the name it does NOT check ``must_change_password`` yet; that gate
+    is the TODO in ``_passes_base_gate`` and lands with the auth-hardening
+    phase. The role classes below inherit from it.
     """
 
     def has_permission(self, request, view) -> bool:

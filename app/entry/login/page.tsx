@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { login, changePassword } from '@/lib/entry/api'
+import { login, changePassword, logout } from '@/lib/entry/api'
 import { homeFor } from '@/lib/auth/roles'
 import type { User } from '@/lib/entry/types'
 
@@ -26,6 +26,8 @@ export default function LoginPage() {
   const navigateByRole = (user: User): boolean => {
     const home = homeFor(user.roles)
     if (home === null) {
+      // Do not leave a usable session behind for an account that has no role yet.
+      logout().catch(() => {})
       setError(NO_ROLE_MESSAGE)
       return false
     }
