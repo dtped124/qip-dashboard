@@ -19,6 +19,7 @@ from pathlib import Path
 from django.http import HttpResponse, JsonResponse
 from openpyxl import Workbook
 
+from apps.accounts.permissions import require_readers
 from .models import DataPoint, DataPointSubcategory
 
 
@@ -172,6 +173,7 @@ def _fetch_value(
     return None
 
 
+@require_readers
 def export_element_list(request):
     """GET /api/v1/exports/element-list/?campus=竹北 → 回傳 .xlsx 檔案下載。"""
     campus = request.GET.get("campus", "").strip()

@@ -1,11 +1,18 @@
 import json
+from zipfile import BadZipFile
 
 from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
+from xlrd import XLRDError
+
+from apps.accounts.permissions import require_admin
 from .models import ImportLog
 
 
-@csrf_exempt
+def _bad_file(message: str) -> JsonResponse:
+    return JsonResponse({"error": {"code": "BAD_FILE", "message": message}}, status=400)
+
+
+@require_admin
 def upload_excel(request):
     """POST /api/v1/imports/upload/ — 上傳 Excel 檔案"""
     if request.method != "POST":
@@ -19,7 +26,15 @@ def upload_excel(request):
     from .services.persistence import save_import_results
 
     file_bytes = uploaded.read()
-    parse_result = parse_qip_excel(file_bytes, uploaded.name)
+    if not file_bytes:
+        # xlrd raises a bare TypeError (not XLRDError) for empty content.
+        return _bad_file("檔案是空的")
+    try:
+        parse_result = parse_qip_excel(file_bytes, uploaded.name)
+    except (BadZipFile, XLRDError) as exc:
+        # Not a readable .xlsx (zip container) / .xls (BIFF) workbook. Only the
+        # open/parse step is guarded; nothing has been saved at this point.
+        return _bad_file(f"無法讀取 Excel 檔案，請確認檔案格式：{exc}")
     log = save_import_results(parse_result, uploaded.name, len(file_bytes))
 
     return JsonResponse({
@@ -34,6 +49,7 @@ def upload_excel(request):
     })
 
 
+@require_admin
 def import_logs(request):
     """GET /api/v1/imports/logs/ — 取得匯入紀錄"""
     logs = ImportLog.objects.all()[:20].values(
@@ -44,7 +60,7 @@ def import_logs(request):
     return JsonResponse({"data": list(logs), "total": ImportLog.objects.count()})
 
 
-@csrf_exempt
+@require_admin
 def correct_datapoint(request):
     """POST /api/v1/imports/correct-datapoint/ — 修正警告資料點並移除對應錯誤訊息"""
     if request.method != "POST":

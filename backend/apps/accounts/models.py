@@ -12,6 +12,7 @@ class UserRole(models.TextChoices):
     REPORTER = "reporter", "指標填報者"
     REVIEWER = "reviewer", "品管中心審核者"
     ADMIN = "admin", "系統管理員"
+    VIEWER = "viewer", "儀表板檢視者"
 
 
 class User(AbstractUser):
@@ -64,3 +65,7 @@ class User(AbstractUser):
     @property
     def is_system_admin(self) -> bool:
         return UserRole.ADMIN in self.roles
+
+    @property
+    def is_viewer(self) -> bool:
+        return UserRole.VIEWER in self.roles

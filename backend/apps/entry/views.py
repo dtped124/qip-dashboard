@@ -6,9 +6,9 @@ import datetime
 
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.accounts.permissions import IsAdmin
 from apps.entry.models import Campus, DeadlineSetting, IndicatorAssignment, ReportCategory
 from apps.entry.serializers import (
     CampusSerializer,
@@ -18,16 +18,10 @@ from apps.entry.serializers import (
 )
 
 
-def _require_admin(request):
-    if not (request.user.is_system_admin or request.user.is_staff):
-        return Response({"detail": "需要系統管理員權限"}, status=status.HTTP_403_FORBIDDEN)
-    return None
-
-
 # ── 院區 ────────────────────────────────────────────────────────
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAdmin])
 def campus_list(request):
     """GET /api/admin/campuses"""
     campuses = Campus.objects.filter(is_active=True)
@@ -37,7 +31,7 @@ def campus_list(request):
 # ── 面向 ────────────────────────────────────────────────────────
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAdmin])
 def category_list(request):
     """GET /api/admin/categories"""
     categories = ReportCategory.objects.all()
@@ -47,13 +41,9 @@ def category_list(request):
 # ── 指標負責人指派 ───────────────────────────────────────────────
 
 @api_view(["GET", "POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAdmin])
 def assignment_list(request):
     """GET/POST /api/admin/assignments?campus=zhubei"""
-    denied = _require_admin(request)
-    if denied:
-        return denied
-
     if request.method == "GET":
         qs = IndicatorAssignment.objects.select_related("campus", "user").filter(
             effective_to__isnull=True  # 僅顯示現行有效指派
@@ -73,13 +63,9 @@ def assignment_list(request):
 
 
 @api_view(["GET", "PATCH", "DELETE"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAdmin])
 def assignment_detail(request, pk):
     """GET/PATCH/DELETE /api/admin/assignments/:id"""
-    denied = _require_admin(request)
-    if denied:
-        return denied
-
     try:
         assignment = IndicatorAssignment.objects.select_related("campus", "user").get(pk=pk)
     except IndicatorAssignment.DoesNotExist:
@@ -103,13 +89,9 @@ def assignment_detail(request, pk):
 # ── 截止日管理 ───────────────────────────────────────────────────
 
 @api_view(["GET", "POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAdmin])
 def deadline_list(request):
     """GET/POST /api/admin/deadlines?year=115"""
-    denied = _require_admin(request)
-    if denied:
-        return denied
-
     if request.method == "GET":
         qs = DeadlineSetting.objects.all()
         year = request.query_params.get("year")

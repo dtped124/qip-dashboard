@@ -10,9 +10,9 @@ POST /api/review/unlock   (系統管理員)
 """
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.accounts.permissions import IsAdmin, IsReviewer
 from apps.entry.services.period import get_current_tw_year_month
 from apps.entry.services.review_service import (
     approve_category,
@@ -24,13 +24,6 @@ from apps.entry.services.review_service import (
     unlock_month,
 )
 from apps.entry.models import Campus
-
-
-def _require_reviewer(request):
-    u = request.user
-    if not (u.is_reviewer or u.is_system_admin or u.is_staff):
-        return Response({"detail": "需要審核者權限"}, status=status.HTTP_403_FORBIDDEN)
-    return None
 
 
 def _parse_year_month(request):
@@ -51,24 +44,17 @@ def _get_campus(campus_code: str):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReviewer])
 def review_overview(request):
     """GET /api/review/overview?year=115&month=3"""
-    denied = _require_reviewer(request)
-    if denied:
-        return denied
     year, month = _parse_year_month(request)
     return Response(get_review_overview(year, month))
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReviewer])
 def review_detail(request):
     """GET /api/review/detail?campus=zhubei&year=115&month=3&category=HA03"""
-    denied = _require_reviewer(request)
-    if denied:
-        return denied
-
     campus_code = request.query_params.get("campus", "")
     category_code = request.query_params.get("category", "")
     year, month = _parse_year_month(request)
@@ -84,12 +70,9 @@ def review_detail(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReviewer])
 def review_approve(request):
     """POST /api/review/approve  body: {campus, year, month, category}"""
-    denied = _require_reviewer(request)
-    if denied:
-        return denied
     d = request.data
     campus = _get_campus(d.get("campus", ""))
     if not campus:
@@ -102,12 +85,9 @@ def review_approve(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReviewer])
 def review_reject(request):
     """POST /api/review/reject  body: {campus, year, month, category, reason}"""
-    denied = _require_reviewer(request)
-    if denied:
-        return denied
     d = request.data
     campus = _get_campus(d.get("campus", ""))
     if not campus:
@@ -123,12 +103,9 @@ def review_reject(request):
 
 
 @api_view(["PATCH"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReviewer])
 def review_edit_entry(request):
     """PATCH /api/review/edit-entry  body: {entry_id, field, new_value, reason}"""
-    denied = _require_reviewer(request)
-    if denied:
-        return denied
     d = request.data
     result = edit_entry(
         request.user,
@@ -143,12 +120,9 @@ def review_edit_entry(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReviewer])
 def review_finalize(request):
     """POST /api/review/finalize  body: {campus, year, month}"""
-    denied = _require_reviewer(request)
-    if denied:
-        return denied
     d = request.data
     campus = _get_campus(d.get("campus", ""))
     if not campus:
@@ -161,11 +135,9 @@ def review_finalize(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAdmin])
 def review_unlock(request):
     """POST /api/review/unlock  body: {campus, year, month, reason}  管理員專用"""
-    if not (request.user.is_system_admin or request.user.is_staff):
-        return Response({"detail": "需要管理員權限"}, status=status.HTTP_403_FORBIDDEN)
     d = request.data
     campus = _get_campus(d.get("campus", ""))
     if not campus:

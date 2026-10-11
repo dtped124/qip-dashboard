@@ -538,20 +538,33 @@ HIS 系統推送 webhook（預留）
 - `CONFLICT` (409) — 狀態衝突（如重複送審）
 - `INTERNAL_ERROR` (500) — 伺服器錯誤
 
+### 認證 / 權限 / CSRF 錯誤
+這三類一律 HTTP 403（未登入也是 403，不是 401），body 為 `{"detail": "...", "code": "..."}`：
+
+| code | 意義 |
+|------|------|
+| `not_authenticated` | 未登入（或帳號已停用）→ 前端應導向登入頁 |
+| `permission_denied` | 已登入但角色不符 |
+| `csrf_failed` | 寫入請求缺少或帶錯 `X-CSRFToken` |
+
+DRF 端點的其他例外（404、405 等）也會多一個 `code`；欄位驗證錯誤（`{"欄位": [...]}`）維持原格式。
+
 ---
 
 ## 🔐 權限矩陣
 
-| 端點前綴 | 允許角色 |
-|---------|---------|
-| `/api/auth/*` | 全部（登入類豁免） |
-| `/api/v1/indicators/` GET | 全部（已登入） |
-| `/api/v1/indicators/{code}/` PATCH | admin |
-| `/api/v1/dashboard/` | 全部（已登入） |
-| `/api/v1/tcpi/` POST | admin |
-| `/api/v1/imports/upload/` | admin / reviewer |
-| `/api/admin/*` | admin |
-| `/api/entry/*` | reporter（限自己被指派的指標） |
-| `/api/review/*` | reviewer / admin |
-| `/api/case-list/review-exclusion` | reviewer / admin |
-| `/api/case-list/exclude` | reporter（該 entry 負責人） |
+角色：`viewer`（儀表板檢視者）、`reporter`、`reviewer`、`admin`。**admin 通過所有檢查**（`is_superuser` 亦同；Django 的 `is_staff` 只決定能否進 `/admin/` 後台，與 API 權限無關）。「讀者」＝ viewer / reviewer / admin。下表 reporter、reviewer 也都隱含 admin。
+
+| 端點 | 允許角色 |
+|------|---------|
+| `POST /api/auth/login` | 匿名（唯一豁免 CSRF 的端點） |
+| `/api/auth/me`、`logout`、`change-password` | 已登入即可（含尚未指派角色者） |
+| `GET /api/v1/dashboard/`、`GET /api/v1/indicators/`、`GET /api/v1/indicators/{code}/`（含 `data`、`alerts`、`summaries`、`analysis`）、`GET /api/v1/tcpi/`、`GET /api/v1/indicators/export/element-list/`、`GET /api/dashboard/entry-data`、`entry-benchmarks`、`/api/davinci/*` 的 GET | 讀者 |
+| `PATCH /api/v1/indicators/{code}/`、`POST /api/v1/tcpi/`、`GET /api/v1/indicators/export/`（全量匯出）、`/api/v1/imports/*`、`POST /api/davinci/import/`、`import/confirm/` | admin |
+| `/api/entry/*` | reporter |
+| `GET /api/case-list/`、`GET /api/case-list/exclusion-reasons` | reporter / reviewer |
+| `POST /api/case-list/exclude`、`restore` | reporter |
+| `POST /api/case-list/review-exclusion`、`/api/review/*`（`unlock` 除外）、`/api/import/*` | reviewer |
+| `POST /api/review/unlock`、`/api/admin/*`（users、campuses、categories、assignments、deadlines） | admin |
+
+實作：`backend/apps/accounts/permissions.py`；逐端點的測試契約：`backend/apps/accounts/tests/test_permissions.py` 的 `MATRIX`（新增端點若沒有登記進去，測試會失敗）。

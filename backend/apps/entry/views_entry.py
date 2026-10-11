@@ -7,9 +7,9 @@ POST /api/entry/submit
 """
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.accounts.permissions import IsReporter
 from apps.entry.models import Campus, IndicatorAssignment
 from apps.entry.services.entry_service import (
     get_category_form,
@@ -45,7 +45,7 @@ def _parse_year_month(request) -> tuple[int, int]:
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReporter])
 def my_tasks(request):
     """GET /api/entry/my-tasks?year=115&month=3"""
     user = request.user
@@ -57,7 +57,7 @@ def my_tasks(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReporter])
 def entry_form(request):
     """GET /api/entry/form?year=115&month=3&category=HA03"""
     user = request.user
@@ -77,7 +77,7 @@ def entry_form(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReporter])
 def entry_save_draft(request):
     """
     POST /api/entry/save-draft
@@ -104,7 +104,7 @@ def entry_save_draft(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsReporter])
 def entry_submit(request):
     """
     POST /api/entry/submit

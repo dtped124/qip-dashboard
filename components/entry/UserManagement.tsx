@@ -8,6 +8,7 @@ const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   { value: 'reporter', label: '填報者' },
   { value: 'reviewer', label: '審核者' },
   { value: 'admin', label: '管理員' },
+  { value: 'viewer', label: '儀表板檢視者' },
 ]
 
 // ─── 主元件 ─────────────────────────────────────────────────────
@@ -190,6 +191,7 @@ function RoleBadge({ role }: { role: UserRole }) {
     reporter: { bg: 'bg-blue-100', text: 'text-blue-700', label: '填報者' },
     reviewer: { bg: 'bg-purple-100', text: 'text-purple-700', label: '審核者' },
     admin: { bg: 'bg-red-100', text: 'text-red-700', label: '管理員' },
+    viewer: { bg: 'bg-teal-100', text: 'text-teal-700', label: '儀表板檢視者' },
   }
   const c = config[role] ?? { bg: 'bg-gray-100', text: 'text-gray-600', label: role }
   return (
@@ -332,7 +334,7 @@ function UserDialog({ user, campuses, onClose, onSaved }: UserDialogProps) {
           {/* 角色 checkbox */}
           <div>
             <label className="block text-xs text-gray-500 mb-1">角色</label>
-            <div className="flex gap-4">
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
               {ROLE_OPTIONS.map((opt) => (
                 <label key={opt.value} className="flex items-center gap-1.5 text-sm cursor-pointer">
                   <input

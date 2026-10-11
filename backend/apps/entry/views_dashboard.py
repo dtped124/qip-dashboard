@@ -6,14 +6,15 @@ GET /api/dashboard/entry-data?campus=zhubei&from=112-01&to=115-03
 GET /api/dashboard/entry-benchmarks?campus=zhubei
 """
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.accounts.permissions import CanViewDashboard
 from apps.entry.models import Campus, IndicatorEntry, MonthlyReport, ReportStatus
+from apps.indicators.views import build_tcpi_payload
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([CanViewDashboard])
 def entry_indicators(request):
     """
     GET /api/dashboard/entry-data?campus=zhubei&from=112-01&to=115-03
@@ -91,11 +92,14 @@ def entry_indicators(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([CanViewDashboard])
 def entry_benchmarks(request):
     """
     GET /api/dashboard/entry-benchmarks?campus=zhubei
     從 TCPI 表取得標竿值（已有現有 API，此為整合入口）
+
+    Calls the shared payload builder instead of the other @api_view function:
+    handing a DRF Request to a wrapped view raises AssertionError (HTTP 500),
+    and a nested view would also re-run auth/permissions of /api/v1/tcpi/.
     """
-    from apps.indicators.views import tcpi_benchmarks
-    return tcpi_benchmarks(request)
+    return Response(build_tcpi_payload())
