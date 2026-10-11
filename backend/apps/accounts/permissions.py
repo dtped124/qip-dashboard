@@ -8,6 +8,10 @@ same rules everywhere in the API:
 * ``is_staff`` is NOT a role. It only opens the Django admin site (/admin/) and
   must never be read as "administrator" by API code.
 * "Dashboard readers" are viewer | reviewer | admin (see ``DASHBOARD_READERS``).
+* A user whose ``must_change_password`` flag is set (new account, password reset by an
+  administrator) is turned away by every check below with 403 ``password_change_required``.
+  Only /api/auth/me, /logout and /change-password stay reachable: they use plain DRF
+  ``IsAuthenticated`` on purpose.
 
 How to protect a view:
 
@@ -25,8 +29,10 @@ anonymous users. Plain Django views have no such default, which is why
 from __future__ import annotations
 
 import functools
+from typing import NamedTuple
 
 from django.http import JsonResponse
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 from apps.accounts.models import UserRole
@@ -43,6 +49,18 @@ DASHBOARD_READERS: tuple[str, ...] = (VIEWER, REVIEWER)
 
 _NOT_AUTHENTICATED = "Authentication credentials were not provided."
 _PERMISSION_DENIED = "You do not have permission to perform this action."
+
+
+class PasswordChangeRequired(PermissionDenied):
+    """403 ``password_change_required``: signed in, but a new password must be set first.
+
+    The DRF classes below raise it; plain Django views get the same body from ``require_roles``.
+    (Defined here, not in exceptions.py: that module imports ``rest_framework.views``, which
+    imports the default permission class from this one.)
+    """
+
+    default_detail = "請先變更密碼"
+    default_code = "password_change_required"
 
 
 # ── Role helpers ─────────────────────────────────────────────────
@@ -76,29 +94,44 @@ def has_role(user, *roles: str) -> bool:
     return any(role in owned for role in roles)
 
 
-def _passes_base_gate(user) -> bool:
-    """The check every permission below builds on: signed in, active account.
+class _GateDenial(NamedTuple):
+    """An API error body: what the client is told and the machine-readable ``code``."""
 
-    TODO(next phase): add the ``must_change_password`` gate here, so that DRF
-    classes and ``require_roles`` pick it up together. /api/auth/* views use
-    plain ``IsAuthenticated`` on purpose and stay reachable for those users.
+    detail: str
+    code: str
+
+
+def _base_gate_denial(user) -> _GateDenial | None:
+    """The check every permission below builds on; None means ``user`` gets through.
+
+    Signed in with an active account, and no mandatory password change pending.
+    DRF classes and ``require_roles`` both call this, so they refuse alike.
+    /api/auth/{me,logout,change-password} use plain ``IsAuthenticated`` on purpose and
+    stay reachable for a user who has to change the password.
     """
-    return _is_active_user(user)
+    if not _is_active_user(user):
+        return _GateDenial(_NOT_AUTHENTICATED, "not_authenticated")
+    if getattr(user, "must_change_password", False):
+        return _GateDenial(PasswordChangeRequired.default_detail, PasswordChangeRequired.default_code)
+    return None
 
 
 # ── DRF permission classes ───────────────────────────────────────
 
 
 class IsAuthenticatedPasswordOK(BasePermission):
-    """Default for every DRF view: a signed-in, active user (any role, or none).
-
-    Despite the name it does NOT check ``must_change_password`` yet; that gate
-    is the TODO in ``_passes_base_gate`` and lands with the auth-hardening
-    phase. The role classes below inherit from it.
+    """Default for every DRF view: a signed-in, active user (any role, or none) who is not
+    waiting for a mandatory password change. The role classes below inherit from it.
     """
 
     def has_permission(self, request, view) -> bool:
-        return _passes_base_gate(request.user)
+        denial = _base_gate_denial(request.user)
+        if denial is None:
+            return True
+        if denial.code == PasswordChangeRequired.default_code:
+            # Authenticated, so DRF's generic refusal would be misleading: tell the SPA what to do.
+            raise PasswordChangeRequired()
+        return False  # anonymous or deactivated: DRF answers NotAuthenticated
 
 
 class _RolePermission(IsAuthenticatedPasswordOK):
@@ -152,17 +185,18 @@ def _json_403(detail: str, code: str) -> JsonResponse:
 def require_roles(*roles: str):
     """Guard a plain Django view; same error shape as the DRF handler.
 
-    Anonymous -> 403 ``not_authenticated``; signed in without one of ``roles``
-    (admin always passes) -> 403 ``permission_denied``. No roles given means
-    "any signed-in user".
+    Anonymous -> 403 ``not_authenticated``; a user who must change the password first
+    -> 403 ``password_change_required``; signed in without one of ``roles`` (admin
+    always passes) -> 403 ``permission_denied``. No roles given means "any signed-in user".
     """
 
     def decorator(view):
         @functools.wraps(view)
         def wrapper(request, *args, **kwargs):
             user = getattr(request, "user", None)
-            if not _passes_base_gate(user):
-                return _json_403(_NOT_AUTHENTICATED, "not_authenticated")
+            denial = _base_gate_denial(user)
+            if denial is not None:
+                return _json_403(denial.detail, denial.code)
             if roles and not has_role(user, *roles):
                 return _json_403(_PERMISSION_DENIED, "permission_denied")
             return view(request, *args, **kwargs)

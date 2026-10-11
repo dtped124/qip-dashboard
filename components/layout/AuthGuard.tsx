@@ -22,7 +22,15 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     }
 
     getMe()
-      .then(setUser)
+      .then((me) => {
+        if (me.must_change_password) {
+          // The backend refuses every other API call until the password is changed;
+          // the login page shows the change-password form for a signed-in user.
+          router.replace('/entry/login')
+          return
+        }
+        setUser(me)
+      })
       .catch(() => {
         router.replace('/entry/login')
       })

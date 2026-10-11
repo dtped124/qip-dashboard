@@ -1,8 +1,15 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { listUsers, listCampuses, createUser, updateUser, deleteUser, resetPassword } from '@/lib/entry/api'
-import type { User, UserRole, Campus, UserCreatePayload, UserUpdatePayload } from '@/lib/entry/types'
+import type {
+  User,
+  UserRole,
+  Campus,
+  UserCreatePayload,
+  UserCreateResponse,
+  UserUpdatePayload,
+} from '@/lib/entry/types'
 
 const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   { value: 'reporter', label: '填報者' },
@@ -10,6 +17,14 @@ const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   { value: 'admin', label: '管理員' },
   { value: 'viewer', label: '儀表板檢視者' },
 ]
+
+/** A temporary password the server generated; it exists only in this component's state, until the dialog is closed. */
+interface IssuedPassword {
+  employeeId: string
+  fullName: string
+  password: string
+  reason: 'created' | 'reset'
+}
 
 // ─── 主元件 ─────────────────────────────────────────────────────
 
@@ -22,6 +37,7 @@ export default function UserManagement() {
   // dialog state
   const [showDialog, setShowDialog] = useState(false)
   const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [issuedPassword, setIssuedPassword] = useState<IssuedPassword | null>(null)
 
   const fetchData = async () => {
     setLoading(true)
@@ -69,18 +85,36 @@ export default function UserManagement() {
   }
 
   const handleResetPassword = async (user: User) => {
-    if (!confirm(`確定要重設「${user.full_name}」的密碼？\n重設後該使用者下次登入須設定新密碼。`)) return
+    if (!confirm(`確定要重設「${user.full_name}」的密碼？\n系統會產生一組臨時密碼，該使用者目前的登入會被登出，下次登入須先設定新密碼。`)) return
     try {
       const res = await resetPassword(user.id)
-      alert(res.detail)
+      setIssuedPassword({
+        employeeId: user.employee_id,
+        fullName: user.full_name,
+        password: res.temporary_password,
+        reason: 'reset',
+      })
     } catch (e) {
       alert(e instanceof Error ? e.message : '重設失敗')
     }
   }
 
-  const handleSave = async () => {
-    await fetchData()
+  /**
+   * After a successful save. `created` is the new account (create mode only); it carries the generated
+   * password when none was typed in. That password exists only in this response, so it goes on screen
+   * first and nothing waits for the list refresh, which follows on its own.
+   */
+  const handleSave = (created?: UserCreateResponse) => {
     setShowDialog(false)
+    if (created?.temporary_password) {
+      setIssuedPassword({
+        employeeId: created.employee_id,
+        fullName: created.full_name,
+        password: created.temporary_password,
+        reason: 'created',
+      })
+    }
+    void fetchData()
   }
 
   return (
@@ -180,6 +214,77 @@ export default function UserManagement() {
           onSaved={handleSave}
         />
       )}
+
+      {issuedPassword && (
+        <TemporaryPasswordDialog issued={issuedPassword} onClose={() => setIssuedPassword(null)} />
+      )}
+    </div>
+  )
+}
+
+// ─── 臨時密碼（只顯示一次）─────────────────────────────────────────
+
+function TemporaryPasswordDialog({ issued, onClose }: { issued: IssuedPassword; onClose: () => void }) {
+  const [copyState, setCopyState] = useState<'idle' | 'done' | 'failed'>('idle')
+
+  const handleCopy = async () => {
+    try {
+      // Throws when the page is not a secure context (no navigator.clipboard) or permission is denied.
+      await navigator.clipboard.writeText(issued.password)
+      setCopyState('done')
+    } catch {
+      setCopyState('failed')
+    }
+  }
+
+  // No backdrop click / Escape handling on purpose: this is the only time the password is shown.
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="temporary-password-title"
+    >
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 p-5">
+        <h3 id="temporary-password-title" className="text-sm font-semibold text-gray-800 mb-1">
+          臨時密碼
+        </h3>
+        <p className="text-xs text-gray-500 mb-3">
+          {issued.fullName}（{issued.employeeId}）{issued.reason === 'created' ? '的帳號已建立' : '的密碼已重設'}
+          ，請將下列臨時密碼交給本人。
+        </p>
+
+        <div className="flex items-center gap-2">
+          <code className="flex-1 px-3 py-2 bg-gray-100 rounded font-mono text-sm text-gray-900 break-all select-all">
+            {issued.password}
+          </code>
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="px-3 py-2 text-xs border rounded text-gray-700 hover:bg-gray-50 whitespace-nowrap"
+          >
+            複製
+          </button>
+        </div>
+        {copyState === 'done' && <p className="mt-1 text-xs text-green-600">已複製到剪貼簿</p>}
+        {copyState === 'failed' && (
+          <p className="mt-1 text-xs text-orange-600">無法自動複製，請直接選取上方的密碼後手動複製</p>
+        )}
+
+        <p className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+          此密碼只會顯示這一次，關閉後無法再查看。對方首次登入須先設定新密碼。
+        </p>
+
+        <div className="flex justify-end pt-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            我已記下，關閉
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -207,7 +312,8 @@ interface UserDialogProps {
   user: User | null  // null = 新增模式
   campuses: Campus[]
   onClose: () => void
-  onSaved: () => void
+  /** Called after a successful save; `created` is the new account (create mode only). */
+  onSaved: (created?: UserCreateResponse) => void
 }
 
 function UserDialog({ user, campuses, onClose, onSaved }: UserDialogProps) {
@@ -222,6 +328,9 @@ function UserDialog({ user, campuses, onClose, onSaved }: UserDialogProps) {
     password: '',
   })
   const [saving, setSaving] = useState(false)
+  // Set synchronously, so a second submit (double click, Enter) that arrives before React has rendered
+  // the disabled button is ignored: it would create the account twice.
+  const submittingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
 
   const toggleRole = (role: UserRole) => {
@@ -235,6 +344,8 @@ function UserDialog({ user, campuses, onClose, onSaved }: UserDialogProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (submittingRef.current) return
+    submittingRef.current = true
     setSaving(true)
     setError(null)
 
@@ -247,26 +358,23 @@ function UserDialog({ user, campuses, onClose, onSaved }: UserDialogProps) {
           roles: form.roles,
         }
         await updateUser(user!.id, payload)
+        onSaved()
       } else {
-        if (!form.password) {
-          setError('請輸入密碼')
-          setSaving(false)
-          return
-        }
         const payload: UserCreatePayload = {
           employee_id: form.employee_id,
           full_name: form.full_name,
           email: form.email,
           campus: form.campus,
           roles: form.roles,
-          password: form.password,
+          // Blank: the server generates a temporary password and returns it.
+          password: form.password || undefined,
         }
-        await createUser(payload)
+        onSaved(await createUser(payload))
       }
-      onSaved()
+      // Saved: the parent closes this dialog, so the save button stays disabled until it is gone.
     } catch (e) {
       setError(e instanceof Error ? e.message : '儲存失敗')
-    } finally {
+      submittingRef.current = false
       setSaving(false)
     }
   }
@@ -349,19 +457,22 @@ function UserDialog({ user, campuses, onClose, onSaved }: UserDialogProps) {
             </div>
           </div>
 
-          {/* 密碼（僅新增時） */}
+          {/* 密碼（僅新增時；選填） */}
           {!isEdit && (
             <div>
-              <label className="block text-xs text-gray-500 mb-1">密碼</label>
+              <label className="block text-xs text-gray-500 mb-1">密碼（選填）</label>
               <input
                 type="password"
                 value={form.password}
                 onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                required
-                minLength={8}
+                minLength={10}
+                autoComplete="new-password"
                 className="w-full px-2 py-1.5 text-sm border rounded"
-                placeholder="至少 8 個字元"
+                placeholder="留空則由系統產生臨時密碼"
               />
+              <p className="mt-1 text-[11px] text-gray-400">
+                自訂密碼至少 10 個字元，不得太常見、不得全為數字、不得與帳號或姓名相似。新帳號首次登入都須先變更密碼。
+              </p>
             </div>
           )}
 

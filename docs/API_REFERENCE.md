@@ -20,32 +20,43 @@
 // Request
 {"employee_id": "10001", "password": "Aa12345678"}
 
-// Response
+// Response 200（使用者物件，同 GET /api/auth/me）
 {
-  "success": true,
-  "user": {
-    "id": 1,
-    "employee_id": "10001",
-    "full_name": "王小明",
-    "roles": ["reporter"],
-    "campus": "新竹",
-    "must_change_password": false
-  }
+  "id": 1,
+  "employee_id": "10001",
+  "full_name": "王小明",
+  "email": "wang@hospital.com",
+  "campus_code": "zhubei",
+  "campus_name": "竹北",
+  "roles": ["reporter"],
+  "is_active": true,
+  "must_change_password": false
 }
 ```
+- 帳號或密碼錯誤：400 `{"non_field_errors": ["帳號或密碼錯誤"]}`。
+- **登入鎖定**（django-axes）：同一帳號連續失敗 5 次（`AXES_FAILURE_LIMIT`）即鎖定 15 分鐘（`AXES_COOLOFF_MINUTES`）。從第 5 次失敗起，鎖定期間連正確密碼也一律回 **429** `{"detail": "登入失敗次數過多，請 15 分鐘後再試", "code": "locked"}`（訊息中的分鐘數取自 `AXES_COOLOFF_MINUTES`）；鎖定期間的嘗試不會延長鎖定（API 登入與 Django 後台都一樣）。登入成功會清掉該帳號先前的失敗次數。管理員重設該帳號的密碼（或 `seed_admin --reset`、`manage.py axes_reset_username <帳號>`）即時解鎖。Django 後台（`/admin/login/`）的失敗與此共用同一個計數。
+- 注意：經 Next 代理後 Django 看到的來源位址對所有人都相同，鎖定實際上是「每個帳號」而非「每個來源」——知道帳號名稱的人可以用幾次錯誤密碼鎖住該帳號（每個冷卻期可重來一次）。本機制擋的是密碼猜測，不是阻斷服務；per-IP 限流要在平台邊緣（LB / WAF）做。
+- `must_change_password` 為 `true` 時登入仍回 200，但在改完密碼之前，除了 `me`、`logout`、`change-password` 以外的 API 一律 403 `password_change_required`。
 
 ### POST /api/auth/logout
 登出（清除 session）
 
 ### GET /api/auth/me
-取得當前登入使用者資訊
+取得當前登入使用者資訊（`must_change_password` 為 true 時也可呼叫）
 
 ### POST /api/auth/change-password
-更改密碼
+更改自己的密碼（`must_change_password` 為 true 時也可呼叫）
 ```json
 // Request
-{"old_password": "...", "new_password": "..."}
+{"current_password": "...", "new_password": "..."}
+
+// Response 200
+{"detail": "密碼已更新"}
 ```
+- 400：`current_password` 不正確、新密碼與目前密碼相同，或新密碼不符規則；錯誤依欄位回傳，如 `{"new_password": ["...", "..."]}`。
+- 密碼規則（`AUTH_PASSWORD_VALIDATORS`）：至少 10 個字元、不得是常見密碼、不得全為數字、不得與帳號／姓名／Email 太相似。
+- 成功後 `must_change_password` 清為 `false`；目前的 session 保持登入，該使用者在其他裝置上的 session 會被登出。
+- session 為閒置逾時：每次請求都會續期，閒置超過 `SESSION_COOKIE_AGE`（預設 8 小時）才失效。
 
 ---
 
@@ -261,20 +272,32 @@
 ### POST /api/admin/users
 建立使用者
 ```json
+// Request（password 選填）
 {
   "employee_id": "10001",
   "full_name": "王小明",
   "email": "wang@hospital.com",
-  "campus_id": 1,
+  "campus": 1,
   "roles": ["reporter"]
 }
+
+// Response 201：使用者物件；未給 password（或空字串）時另附一次性的臨時密碼
+{"id": 7, "employee_id": "10001", "...": "...", "must_change_password": true, "temporary_password": "Xk7#mQ2-vR9pLw"}
 ```
+- `password` 留空 → 系統產生隨機臨時密碼，**只在這個回應出現一次**（回應帶 `Cache-Control: no-store`，不寫 log、不存明文）；有填 → 必須符合密碼規則，不符回 400 `{"password": [...]}`，回應不含密碼。
+- 新帳號一律 `must_change_password = true`。
+- `roles` 必須是清單，且每個值都是 `reporter` / `reviewer` / `admin` / `viewer` 之一（重複的會去除）；否則 400 `{"roles": [...]}`。
 
 ### GET/PATCH/DELETE /api/admin/users/{pk}
-使用者 CRUD
+使用者 CRUD。PATCH 同樣驗證 `roles`。管理員不能對自己：停用帳號（400 `cannot_deactivate_self`）、移除自己的 `admin` 角色（400 `cannot_remove_own_admin_role`）、刪除帳號（400）。
 
 ### POST /api/admin/users/{pk}/reset-password
-重設密碼（回傳新密碼，預設為 employee_id，觸發 `must_change_password = true`）
+重設密碼：產生隨機臨時密碼，設 `must_change_password = true`，同時解除該帳號的登入鎖定，並使其現有的所有 session 失效。
+```json
+// Response 200（只回這一次，不寫 log、不存明文；帶 Cache-Control: no-store）
+{"temporary_password": "Xk7#mQ2-vR9pLw"}
+```
+臨時密碼至少 12 個字元，含大小寫字母、數字、符號，並通過密碼規則。
 
 ---
 
@@ -539,13 +562,16 @@ HIS 系統推送 webhook（預留）
 - `INTERNAL_ERROR` (500) — 伺服器錯誤
 
 ### 認證 / 權限 / CSRF 錯誤
-這三類一律 HTTP 403（未登入也是 403，不是 401），body 為 `{"detail": "...", "code": "..."}`：
+這四類一律 HTTP 403（未登入也是 403，不是 401），body 為 `{"detail": "...", "code": "..."}`：
 
 | code | 意義 |
 |------|------|
 | `not_authenticated` | 未登入（或帳號已停用）→ 前端應導向登入頁 |
 | `permission_denied` | 已登入但角色不符 |
+| `password_change_required` | 已登入，但 `must_change_password` 為 true（新帳號、被管理員重設密碼）→ 前端應導向登入頁的改密碼表單；只有 `me`、`logout`、`change-password` 不受限 |
 | `csrf_failed` | 寫入請求缺少或帶錯 `X-CSRFToken` |
+
+另有 **HTTP 429 `locked`**（`{"detail": "登入失敗次數過多，請 15 分鐘後再試", "code": "locked"}`）：登入失敗次數超過上限，見 `POST /api/auth/login`。
 
 DRF 端點的其他例外（404、405 等）也會多一個 `code`；欄位驗證錯誤（`{"欄位": [...]}`）維持原格式。
 
@@ -558,7 +584,7 @@ DRF 端點的其他例外（404、405 等）也會多一個 `code`；欄位驗�
 | 端點 | 允許角色 |
 |------|---------|
 | `POST /api/auth/login` | 匿名（唯一豁免 CSRF 的端點） |
-| `/api/auth/me`、`logout`、`change-password` | 已登入即可（含尚未指派角色者） |
+| `/api/auth/me`、`logout`、`change-password` | 已登入即可（含尚未指派角色者，以及必須先變更密碼者）。**其餘所有端點**對 `must_change_password` 為 true 的使用者一律 403 `password_change_required`，不論角色 |
 | `GET /api/v1/dashboard/`、`GET /api/v1/indicators/`、`GET /api/v1/indicators/{code}/`（含 `data`、`alerts`、`summaries`、`analysis`）、`GET /api/v1/tcpi/`、`GET /api/v1/indicators/export/element-list/`、`GET /api/dashboard/entry-data`、`entry-benchmarks` | 讀者 |
 | `PATCH /api/v1/indicators/{code}/`、`POST /api/v1/tcpi/`、`GET /api/v1/indicators/export/`（全量匯出）、`/api/v1/imports/*` | admin |
 | `GET /api/davinci/meta/`、`indicators/`、`indicators/{code}/series/`、`drilldown/`（彙總，不含逐案） | 讀者 |

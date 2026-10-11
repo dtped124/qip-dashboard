@@ -22,7 +22,18 @@ export interface UserCreatePayload {
   email: string
   campus: number | null
   roles: UserRole[]
-  password: string
+  /** Optional: left out, the server generates a temporary password (see UserCreateResponse). */
+  password?: string
+}
+
+/** POST /api/admin/users: the new user, plus the generated password when none was supplied (shown once). */
+export interface UserCreateResponse extends User {
+  temporary_password?: string
+}
+
+/** POST /api/admin/users/:id/reset-password: the one-time temporary password. */
+export interface ResetPasswordResponse {
+  temporary_password: string
 }
 
 export interface UserUpdatePayload {

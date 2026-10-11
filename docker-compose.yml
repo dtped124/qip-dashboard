@@ -58,6 +58,9 @@ services:
       REDIS_URL: redis://redis:6379/1
       CELERY_BROKER_URL: redis://redis:6379/2
       CELERY_RESULT_BACKEND: redis://redis:6379/3
+      # Initial password for `manage.py seed_admin` (start.bat). Intentionally no default:
+      # the admin account is only created/reset when you provide one.
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
 
 volumes:
   postgres_data:
