@@ -34,7 +34,7 @@
 }
 ```
 - 帳號或密碼錯誤：400 `{"non_field_errors": ["帳號或密碼錯誤"]}`。
-- **登入鎖定**（django-axes）：同一帳號連續失敗 5 次（`AXES_FAILURE_LIMIT`）即鎖定 15 分鐘（`AXES_COOLOFF_MINUTES`）。從第 5 次失敗起，鎖定期間連正確密碼也一律回 **429** `{"detail": "登入失敗次數過多，請 15 分鐘後再試", "code": "locked"}`（訊息中的分鐘數取自 `AXES_COOLOFF_MINUTES`）；鎖定期間的嘗試不會延長鎖定（API 登入與 Django 後台都一樣）。登入成功會清掉該帳號先前的失敗次數。管理員重設該帳號的密碼（或 `seed_admin --reset`、`manage.py axes_reset_username <帳號>`）即時解鎖。Django 後台（`/admin/login/`）的失敗與此共用同一個計數。
+- **登入鎖定**（django-axes）：同一帳號連續失敗 5 次（`AXES_FAILURE_LIMIT`）即鎖定 5 分鐘（`AXES_COOLOFF_MINUTES`）。從第 5 次失敗起，鎖定期間連正確密碼也一律回 **429** `{"detail": "登入失敗次數過多，請 5 分鐘後再試", "code": "locked"}`（訊息中的分鐘數取自 `AXES_COOLOFF_MINUTES`）；鎖定期間的嘗試不會延長鎖定（API 登入與 Django 後台都一樣）。登入成功會清掉該帳號先前的失敗次數。管理員重設該帳號的密碼（或 `seed_admin --reset`、`manage.py axes_reset_username <帳號>`）即時解鎖。Django 後台（`/admin/login/`）的失敗與此共用同一個計數。
 - 注意：經 Next 代理後 Django 看到的來源位址對所有人都相同，鎖定實際上是「每個帳號」而非「每個來源」——知道帳號名稱的人可以用幾次錯誤密碼鎖住該帳號（每個冷卻期可重來一次）。本機制擋的是密碼猜測，不是阻斷服務；per-IP 限流要在平台邊緣（LB / WAF）做。
 - `must_change_password` 為 `true` 時登入仍回 200，但在改完密碼之前，除了 `me`、`logout`、`change-password` 以外的 API 一律 403 `password_change_required`。
 
@@ -571,7 +571,7 @@ HIS 系統推送 webhook（預留）
 | `password_change_required` | 已登入，但 `must_change_password` 為 true（新帳號、被管理員重設密碼）→ 前端應導向登入頁的改密碼表單；只有 `me`、`logout`、`change-password` 不受限 |
 | `csrf_failed` | 寫入請求缺少或帶錯 `X-CSRFToken` |
 
-另有 **HTTP 429 `locked`**（`{"detail": "登入失敗次數過多，請 15 分鐘後再試", "code": "locked"}`）：登入失敗次數超過上限，見 `POST /api/auth/login`。
+另有 **HTTP 429 `locked`**（`{"detail": "登入失敗次數過多，請 5 分鐘後再試", "code": "locked"}`）：登入失敗次數超過上限，見 `POST /api/auth/login`。
 
 DRF 端點的其他例外（404、405 等）也會多一個 `code`；欄位驗證錯誤（`{"欄位": [...]}`）維持原格式。
 

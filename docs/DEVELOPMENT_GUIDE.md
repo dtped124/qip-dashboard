@@ -51,7 +51,7 @@ docker compose exec web python manage.py createsuperuser
 - **帳號**：員工編號（`employee_id`），如 `admin` 或 `10001`
 - **admin**：密碼不寫在程式裡。先設定環境變數 `SEED_ADMIN_PASSWORD`（或用 `--password "…"`），再執行 `python manage.py seed_admin`（`start.bat` 會轉送該變數；已存在的 admin 會略過，`--reset` 才會重設並解除登入鎖定）。密碼須通過密碼規則，建立或重設後 `must_change_password=True`，首次登入強制變更；指令不會印出密碼。
 - **其他使用者**：由管理員在帳號管理頁新增；密碼留空 → 系統產生臨時密碼（只顯示一次），`must_change_password=True`。
-- **登入防護**：django-axes——同一帳號失敗 5 次鎖 15 分鐘（`AXES_FAILURE_LIMIT`、`AXES_COOLOFF_MINUTES`，見 `backend/.env.example`）；`python manage.py axes_reset_username <帳號>` 可手動解鎖。經 Next 代理後所有人的來源位址相同，鎖定實際上是「每個帳號」：知道帳號名稱的人就能鎖住它，每次冷卻結束可再鎖（`AXES_IPWARE_*` 在沒裝 django-ipware 時完全無效；真正的 per-IP 限流要在平台邊緣做），細節見 `config/settings/base.py` 的 AXES 註解。session 為閒置逾時 8 小時（`SESSION_COOKIE_AGE`，`SESSION_SAVE_EVERY_REQUEST` 讓每次請求都續期）。
+- **登入防護**：django-axes——同一帳號失敗 5 次鎖 5 分鐘（`AXES_FAILURE_LIMIT`、`AXES_COOLOFF_MINUTES`，見 `backend/.env.example`）；`python manage.py axes_reset_username <帳號>` 可手動解鎖。經 Next 代理後所有人的來源位址相同，鎖定實際上是「每個帳號」：知道帳號名稱的人就能鎖住它，每次冷卻結束可再鎖（`AXES_IPWARE_*` 在沒裝 django-ipware 時完全無效；真正的 per-IP 限流要在平台邊緣做），細節見 `config/settings/base.py` 的 AXES 註解。session 為閒置逾時 8 小時（`SESSION_COOKIE_AGE`，`SESSION_SAVE_EVERY_REQUEST` 讓每次請求都續期）。
 
 ### 既有環境升級（上線登入防護 P3 時）
 - **套件與資料表**：重建 api 映像（`backend/requirements.txt` 新增 `django-axes==8.3.1`），再執行 `docker compose exec -T api python manage.py migrate`（建立 axes 的資料表；`start.bat` 啟動時本來就會跑 migrate）。

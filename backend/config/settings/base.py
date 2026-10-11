@@ -204,7 +204,7 @@ AXES_FAILURE_LIMIT = env.int("AXES_FAILURE_LIMIT", default=5)
 if AXES_FAILURE_LIMIT < 1:
     # axes locks once failures >= limit: 0 would lock every account before its first attempt.
     raise ImproperlyConfigured("AXES_FAILURE_LIMIT must be at least 1")
-_axes_cooloff_minutes = env.int("AXES_COOLOFF_MINUTES", default=15)
+_axes_cooloff_minutes = env.int("AXES_COOLOFF_MINUTES", default=5)
 if _axes_cooloff_minutes < 1:
     # axes would read 0 as "failures expire at once": the lock could never take effect.
     raise ImproperlyConfigured("AXES_COOLOFF_MINUTES must be at least 1")

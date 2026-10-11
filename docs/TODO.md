@@ -74,7 +74,7 @@
 - [ ] Excel 批次匯入使用者（從 HR 系統員工名單）
 - [ ] 帳號停用流程（保留歷史操作，禁止登入）
 - [x] 密碼強度驗證（P3 完成，`AUTH_PASSWORD_VALIDATORS`）：最短 10 字元、不得為常見密碼、不得全為數字、不得與帳號／姓名／Email 相似；不強制大小寫／符號組合
-- [x] 連續失敗鎖定（P3 完成，django-axes）：同一帳號失敗 5 次鎖 15 分鐘，次數與分鐘數可由 `AXES_FAILURE_LIMIT`、`AXES_COOLOFF_MINUTES` 調整
+- [x] 連續失敗鎖定（P3 完成，django-axes）：同一帳號失敗 5 次鎖 5 分鐘，次數與分鐘數可由 `AXES_FAILURE_LIMIT`、`AXES_COOLOFF_MINUTES` 調整
 
 ### 9. 操作日誌
 - [ ] 全系統 `activity_logs` 表（登入、改指派、改截止日、匯入、解鎖定稿）
