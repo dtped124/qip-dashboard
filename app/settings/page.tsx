@@ -1,13 +1,26 @@
 'use client';
 
 import Link from 'next/link';
-import { Settings, ListChecks, Database, Trash2, BarChart3, Bot } from 'lucide-react';
-import { useState } from 'react';
+import { Settings, ListChecks, Database, Trash2, BarChart3, Bot, UserCog } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { clearAllData } from '@/lib/db/operations';
+import { getMe } from '@/lib/entry/api';
+import { isAdmin } from '@/lib/auth/roles';
 
 export default function SettingsPage() {
   const [clearing, setClearing] = useState(false);
   const [cleared, setCleared] = useState(false);
+  // Admin-only entries are hidden until we know the user's roles. The backend
+  // enforces the permission regardless; this only decides what to show.
+  const [showAdmin, setShowAdmin] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getMe()
+      .then((me) => { if (!cancelled) setShowAdmin(isAdmin(me.roles)); })
+      .catch(() => { /* not logged in: AuthGuard already redirects */ });
+    return () => { cancelled = true; };
+  }, []);
 
   async function handleClearData() {
     if (!confirm('確定要清除所有資料嗎？此操作無法復原。\n（指標定義不會被刪除）')) return;
@@ -28,6 +41,22 @@ export default function SettingsPage() {
       </div>
 
       <div className="grid gap-4">
+        {/* 填報系統管理（管理員） */}
+        {showAdmin && (
+          <Link
+            href="/entry/admin"
+            className="flex items-center gap-4 bg-white rounded-lg shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow"
+          >
+            <div className="p-3 bg-indigo-50 rounded-lg">
+              <UserCog size={24} className="text-indigo-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-gray-800">填報系統管理</h2>
+              <p className="text-sm text-gray-500">帳號管理、填報截止日、指標負責人指派（僅管理員）</p>
+            </div>
+          </Link>
+        )}
+
         {/* 指標管理 */}
         <Link
           href="/settings/indicators"

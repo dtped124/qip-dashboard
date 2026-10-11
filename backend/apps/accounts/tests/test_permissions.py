@@ -432,7 +432,8 @@ def test_require_roles_without_roles_means_any_signed_in_user(rf):
         "code": "not_authenticated",
     }
 
-    request.user = User(employee_id="n", roles=[])
+    # A bare User() carries the model default must_change_password=True, which the gate refuses.
+    request.user = User(employee_id="n", roles=[], must_change_password=False)
     assert view(request).status_code == 200
 
 
@@ -442,16 +443,16 @@ def test_require_roles_denies_wrong_role_with_permission_denied(rf):
         return HttpResponse("ok")
 
     request = rf.get("/x")
-    request.user = User(employee_id="v", roles=["viewer"])
+    request.user = User(employee_id="v", roles=["viewer"], must_change_password=False)
     resp = view(request)
     assert resp.status_code == 403
     assert json.loads(resp.content) == {
         "detail": "You do not have permission to perform this action.",
         "code": "permission_denied",
     }
-    request.user = User(employee_id="r", roles=["reviewer"])
+    request.user = User(employee_id="r", roles=["reviewer"], must_change_password=False)
     assert view(request).status_code == 200
-    request.user = User(employee_id="a", roles=["admin"])
+    request.user = User(employee_id="a", roles=["admin"], must_change_password=False)
     assert view(request).status_code == 200
 
 

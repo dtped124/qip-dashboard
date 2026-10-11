@@ -23,8 +23,13 @@ URL = "/api/v1/imports/upload/"
 
 @pytest.fixture
 def admin():
+    # must_change_password defaults to True, which the API refuses outright (password gate).
     return User.objects.create_user(
-        username="t_upload_admin", employee_id="t_upload_admin", full_name="Test admin", roles=["admin"]
+        username="t_upload_admin",
+        employee_id="t_upload_admin",
+        full_name="Test admin",
+        roles=["admin"],
+        must_change_password=False,
     )
 
 

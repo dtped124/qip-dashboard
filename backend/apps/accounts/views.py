@@ -1,8 +1,8 @@
 """
-認證 API：登入、登出、取得當前使用者資訊
+認證 API：登入、登出、取得當前使用者資訊、變更密碼
 帳號管理 API（系統管理員）
 """
-from django.contrib.auth import login, logout
+from django.contrib.auth import login, logout, update_session_auth_hash
 from django.http import JsonResponse
 from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import status
@@ -10,27 +10,40 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
+from apps.accounts.lockout import unlock_account
 from apps.accounts.models import User, UserRole
+from apps.accounts.passwords import generate_temporary_password
 from apps.accounts.permissions import IsAdmin
 from apps.accounts.serializers import (
+    ChangePasswordSerializer,
     LoginSerializer,
     UserCreateSerializer,
     UserSerializer,
     UserUpdateSerializer,
 )
 
-DEFAULT_RESET_PASSWORD = "Qip@2026!"
+
+def _no_store(response: Response) -> Response:
+    """Keep a response that carries a one-time password out of browser and proxy caches."""
+    response["Cache-Control"] = "no-store"
+    return response
 
 
 @api_view(["POST"])
 @authentication_classes([])
 @permission_classes([AllowAny])
 def auth_login(request):
-    """POST /api/auth/login — 帳號 + 密碼登入（無需 CSRF）"""
+    """POST /api/auth/login — 帳號 + 密碼登入（無需 CSRF）
+
+    Too many failed attempts for an account answer 429 ``locked`` (django-axes);
+    see LoginSerializer.validate. A user who must change the password still gets
+    200 here, with ``must_change_password: true`` in the body.
+    """
     serializer = LoginSerializer(data=request.data, context={"request": request})
     serializer.is_valid(raise_exception=True)
     user = serializer.validated_data["user"]
-    login(request, user)
+    # The same HttpRequest object django-axes tracked during authenticate().
+    login(request._request, user)
     return Response(UserSerializer(user).data)
 
 
@@ -57,7 +70,11 @@ def auth_me(request):
 @api_view(["GET", "POST"])
 @permission_classes([IsAdmin])
 def user_list(request):
-    """GET/POST /api/admin/users"""
+    """GET/POST /api/admin/users
+
+    POST without ``password`` (or with a blank one) creates the account with a random
+    temporary password, returned once as ``temporary_password`` in the 201 body.
+    """
     if request.method == "GET":
         qs = User.objects.select_related("campus").order_by("employee_id")
         return Response(UserSerializer(qs, many=True).data)
@@ -65,7 +82,28 @@ def user_list(request):
     serializer = UserCreateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     user = serializer.save()
-    return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
+    payload = dict(UserSerializer(user).data)
+    if serializer.temporary_password:
+        payload["temporary_password"] = serializer.temporary_password
+    response = Response(payload, status=status.HTTP_201_CREATED)
+    return _no_store(response) if serializer.temporary_password else response
+
+
+def _self_demotion_error(user: User, changes: dict) -> Response | None:
+    """An administrator may not deactivate their own account or remove their own admin role.
+
+    This has nothing to do with the login lockout. Returns the 400 response for such a change, else None.
+    """
+    if changes.get("is_active") is False:
+        return Response(
+            {"detail": "不可停用自己的帳號", "code": "cannot_deactivate_self"}, status=status.HTTP_400_BAD_REQUEST
+        )
+    if "roles" in changes and UserRole.ADMIN in user.role_set() and UserRole.ADMIN not in changes["roles"]:
+        return Response(
+            {"detail": "不可移除自己的系統管理員角色", "code": "cannot_remove_own_admin_role"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return None
 
 
 @api_view(["GET", "PATCH", "DELETE"])
@@ -89,6 +127,10 @@ def user_detail(request, pk):
 
     serializer = UserUpdateSerializer(user, data=request.data, partial=True)
     serializer.is_valid(raise_exception=True)
+    if user.pk == request.user.pk:
+        refused = _self_demotion_error(user, serializer.validated_data)
+        if refused is not None:
+            return refused
     serializer.save()
     return Response(UserSerializer(user).data)
 
@@ -96,32 +138,43 @@ def user_detail(request, pk):
 @api_view(["POST"])
 @permission_classes([IsAdmin])
 def reset_password(request, pk):
-    """POST /api/admin/users/:id/reset-password — 管理員重設密碼"""
+    """POST /api/admin/users/:id/reset-password — 管理員重設密碼
+
+    Sets a random temporary password, flags the account ``must_change_password`` and lifts
+    its login lockout. The password is returned this once and is not logged or stored.
+    Changing the password also ends every session the user has open.
+    """
     try:
         user = User.objects.get(pk=pk)
     except User.DoesNotExist:
         return Response({"detail": "找不到使用者"}, status=status.HTTP_404_NOT_FOUND)
 
-    user.set_password(DEFAULT_RESET_PASSWORD)
+    temporary_password = generate_temporary_password(user)
+    user.set_password(temporary_password)
     user.must_change_password = True
-    user.save()
-    return Response({"detail": f"密碼已重設，預設密碼為 {DEFAULT_RESET_PASSWORD}"})
+    user.save(update_fields=["password", "must_change_password"])
+    unlock_account(user.employee_id)
+    return _no_store(Response({"temporary_password": temporary_password}))
 
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def change_password(request):
-    """POST /api/auth/change-password — 使用者修改自己的密碼"""
-    new_password = request.data.get("new_password", "")
-    if len(new_password) < 8:
-        return Response({"detail": "新密碼至少需要 8 個字元"}, status=status.HTTP_400_BAD_REQUEST)
+    """POST /api/auth/change-password — 使用者修改自己的密碼
 
+    Body: ``current_password``, ``new_password``. Open to a user who must change the
+    password (plain IsAuthenticated); a successful change lifts that obligation.
+    """
     user = request.user
-    user.set_password(new_password)
+    serializer = ChangePasswordSerializer(data=request.data, context={"user": user})
+    serializer.is_valid(raise_exception=True)
+
+    user.set_password(serializer.validated_data["new_password"])
     user.must_change_password = False
-    user.save()
-    # 重新登入以維持 session
-    login(request, user)
+    user.save(update_fields=["password", "must_change_password"])
+    # The session hash is derived from the password: refresh it so this session survives
+    # (every other session of the user is signed out).
+    update_session_auth_hash(request, user)
     return Response({"detail": "密碼已更新"})
 
 

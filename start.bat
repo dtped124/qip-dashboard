@@ -21,7 +21,11 @@ timeout /t 8 /nobreak >nul
 
 echo [3/4] Running migrations and seeding data...
 docker-compose exec api python manage.py migrate --noinput
-docker-compose exec api python manage.py seed_admin
+REM seed_admin needs the initial admin password in the SEED_ADMIN_PASSWORD environment variable.
+REM Set it in this console before running the script, with quotes:  set "SEED_ADMIN_PASSWORD=..."
+REM and keep & ^ % ! out of the password (cmd treats them specially). It is NOT stored in the repo
+REM and never printed. -e with the name only forwards the value untouched; if unset nothing is forwarded.
+docker-compose exec -e SEED_ADMIN_PASSWORD api python manage.py seed_admin
 docker-compose exec api python manage.py seed_entry_base
 docker-compose exec api python manage.py seed_indicators
 echo.
@@ -46,7 +50,8 @@ echo   Login:        http://localhost:3000/entry/login
 echo   Admin:        http://localhost:8001/admin/
 echo ============================================
 echo.
-echo   Login: admin  /  Password: Admin1234!
+echo   Login: admin
+echo   首次登入請用 SEED_ADMIN_PASSWORD 設定的密碼，登入後須變更
 echo.
 echo All services started. Frontend window is minimized.
 echo Press any key to stop all services...

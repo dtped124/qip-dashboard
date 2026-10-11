@@ -1,5 +1,64 @@
 # 更新日誌 (CHANGELOG)
 
+## 雲端化 P3 — 登入防護與密碼政策（2026-10-11，`feat/auth-hardening`）
+
+### ✨ 新功能 / 改進
+- **登入鎖定**（django-axes 8.3.1）：同一帳號連續失敗 5 次鎖 5 分鐘（`AXES_FAILURE_LIMIT`、`AXES_COOLOFF_MINUTES`）；從第 5 次失敗起回 429 `locked`，訊息中的分鐘數取自設定；鎖定期間的嘗試不延長鎖定；登入成功會重置；重設密碼、`seed_admin --reset`、`manage.py axes_reset_username` 都能解鎖；Django 後台登入共用同一個計數
+- **密碼政策**（`AUTH_PASSWORD_VALIDATORS`）：至少 10 字元、不得為常見密碼、不得全為數字、不得與帳號／姓名／Email 相似；套用於變更密碼、建立帳號、`seed_admin` 與 Django 後台
+- **重設密碼改為隨機臨時密碼**（至少 12 字元，含大小寫、數字、符號）：只在回應中出現一次、不寫 log、不存明文；該使用者所有現有 session 隨之失效
+- **強制改密碼**：`must_change_password` 為 true 時，除 `me` / `logout` / `change-password` 外所有 API 一律 403 `password_change_required`（DRF 與純 Django view 同一個閘門）；變更密碼必須帶 `current_password`
+- 建立帳號時密碼改為選填（留空 → 系統產生臨時密碼）；`roles` 只接受 `UserRole` 的清單；管理員不能停用自己或拿掉自己的 admin 角色
+- **session 改為閒置逾時**（預設 8 小時，每次請求續期，`SESSION_COOKIE_AGE` + `SESSION_SAVE_EVERY_REQUEST`）
+- **前端**：帳號管理的臨時密碼視窗（只顯示一次、可複製）；登入頁的強制改密碼表單（重新整理後仍會出現，可登出）；`AuthGuard` 把必須改密碼的使用者導回登入頁
+
+### 🔐 安全性
+- 移除寫死在原始碼裡的預設密碼（`seed_admin` 的預設 admin 密碼、重設密碼的固定字串）；`seed_admin` 改讀 `--password` 或環境變數 `SEED_ADMIN_PASSWORD`，不再印出密碼；`start.bat` 不再顯示密碼；根目錄 `.gitignore` 加入 `.env`
+- 已知限制：經 Next 代理後所有人的來源位址相同，鎖定實際上是「每個帳號」，知道帳號名稱的人能鎖住它（鎖定期間的嘗試不會延長鎖定，管理員可立即解鎖）；`AXES_IPWARE_*` 在沒裝 django-ipware 時無效；per-IP 限流要在平台邊緣（LB / WAF）做
+
+### 📁 修改檔案
+| 檔案 | 修改內容 |
+|------|---------|
+| `backend/config/settings/base.py` | axes（app / middleware / backend / `AXES_*`）、`AUTH_PASSWORD_VALIDATORS`、session 閒置逾時 |
+| `backend/apps/accounts/lockout.py`（新） | axes 的帳號名稱與 429 回應 callable、`AccountLocked`、`unlock_account` |
+| `backend/apps/accounts/passwords.py`（新） | `password_problems`、`generate_temporary_password` |
+| `backend/apps/accounts/{permissions,serializers,views}.py` | 改密碼閘門、登入走 axes、變更密碼／建立帳號／roles 驗證、重設密碼 |
+| `backend/apps/accounts/management/commands/seed_admin.py` | 密碼來源改為 `--password` / `SEED_ADMIN_PASSWORD`，不印密碼 |
+| `backend/apps/accounts/tests/test_auth_hardening.py`（新） | 鎖定、閘門、密碼規則、帳號管理、`seed_admin` 測試 |
+| `app/entry/login/page.tsx`、`components/entry/UserManagement.tsx`、`components/layout/AuthGuard.tsx` | 強制改密碼流程、臨時密碼視窗 |
+| `start.bat`、`docker-compose.yml`、`backend/.env.example` | `SEED_ADMIN_PASSWORD` 轉送、AXES / session 設定範例 |
+
+---
+
+## 雲端化 P2 — 登入與角色權限（2026-10-11，`feat/backend-permissions`，PR #8）
+
+### ✨ 新功能 / 改進
+- **所有 `/api/` 預設需登入**（DRF `IsAuthenticatedPasswordOK`），57 條路由逐一登記權限決定（只有登入開放匿名）：admin 通過所有檢查，Django 的 `is_staff` 不再授予任何 API 權限；純 Django view 以 `require_roles` 保護
+- 新增 `viewer`（儀表板檢視者）角色；達文西逐案端點（`cases/`、`export/`）限 reviewer｜admin，`import/logs/` 限 admin
+- 認證／權限／CSRF 錯誤統一為 `{"detail", "code"}`（`not_authenticated`、`permission_denied`、`csrf_failed`）；CSRF 失敗改回 JSON
+- 移除 imports 與 davinci 上傳端點的 `csrf_exempt`（登入是唯一例外）
+- 前端：`lib/auth/roles.ts`（`homeFor`／`canAccess`）、登入頁依角色導頁、沒有角色的帳號登入後立即登出並說明、`lib/http.ts` 透傳後端的 `code`
+
+### 🐛 Bug 修正
+- `entry-benchmarks` 500（把 DRF Request 傳給另一個 `@api_view`）
+- 損毀的 Excel 上傳回 500 → 改回 400 `BAD_FILE`
+
+### ✅ 測試
+- 130 條權限測試，含以 URL resolver 列舉所有 `/api/` 路由的 meta-test：新增端點若沒登記權限，測試會失敗
+
+---
+
+## 雲端化 P1 — 同源 API 代理與統一 HTTP client（2026-10-11，`feat/same-origin-api`）
+
+### ✨ 新功能 / 改進
+- `lib/http.ts`：統一的 fetch 封裝（帶 cookies、CSRF header、逾時、`ApiError` 錯誤解析、檔案下載）；前端所有 API 呼叫都改走它，移除 `NEXT_PUBLIC_API_URL` 預設值與直連 `localhost:8001` 的 fetch
+- `next.config.mjs`：以 rewrites 把 `/api/*` 代理到 Django（`API_INTERNAL_URL`），保留結尾斜線、代理逾時 120 秒、可選 standalone 輸出 → 瀏覽器只呼叫同源的相對路徑，session 與 CSRF cookie 在同一個 origin，不再需要 CORS
+- Django：`USE_X_FORWARDED_HOST`（可由環境變數控制）、`/api/auth/me` 設定 csrftoken cookie
+
+### 🐛 Bug 修正
+- TCPI POST 改讀 `request.data`（帶 session cookie 時讀 `request.body` 會丟 `RawPostDataException`）
+
+---
+
 ## v2.x (2026-04-18) — SPC 目標模式 + 標籤校準合併至 master
 
 ### ✨ 新功能 / 改進

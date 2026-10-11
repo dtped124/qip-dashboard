@@ -13,10 +13,12 @@ import type {
   FormValue,
   IndicatorAssignment,
   MyTasksResponse,
+  ResetPasswordResponse,
   SaveDraftResponse,
   SubmitResponse,
   User,
   UserCreatePayload,
+  UserCreateResponse,
   UserUpdatePayload,
 } from './types'
 
@@ -48,8 +50,9 @@ export async function listUsers(): Promise<User[]> {
   return apiFetch<User[]>('/api/admin/users')
 }
 
-export async function createUser(data: UserCreatePayload): Promise<User> {
-  return apiFetch<User>('/api/admin/users', {
+/** Without `password` the server generates one and returns it once as `temporary_password`. */
+export async function createUser(data: UserCreatePayload): Promise<UserCreateResponse> {
+  return apiFetch<UserCreateResponse>('/api/admin/users', {
     method: 'POST',
     json: data,
   })
@@ -66,16 +69,18 @@ export async function deleteUser(id: number): Promise<void> {
   await apiFetch<void>(`/api/admin/users/${id}`, { method: 'DELETE' })
 }
 
-export async function resetPassword(id: number): Promise<{ detail: string }> {
-  return apiFetch<{ detail: string }>(`/api/admin/users/${id}/reset-password`, {
+/** Sets a random temporary password and returns it; this response is the only time it is ever shown. */
+export async function resetPassword(id: number): Promise<ResetPasswordResponse> {
+  return apiFetch<ResetPasswordResponse>(`/api/admin/users/${id}/reset-password`, {
     method: 'POST',
   })
 }
 
-export async function changePassword(newPassword: string): Promise<void> {
+/** Own password. Also what clears `must_change_password` after a first login or an admin reset. */
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
   await apiFetch('/api/auth/change-password', {
     method: 'POST',
-    json: { new_password: newPassword },
+    json: { current_password: currentPassword, new_password: newPassword },
   })
 }
 
