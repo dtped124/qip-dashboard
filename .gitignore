@@ -45,3 +45,6 @@ next-env.d.ts
 
 # claude local settings
 .claude/settings.local.json
+
+# real hospital spreadsheets kept out of public/ (never served, never committed)
+local-data/

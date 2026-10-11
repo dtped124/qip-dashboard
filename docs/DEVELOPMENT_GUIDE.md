@@ -52,6 +52,7 @@ docker compose exec web python manage.py createsuperuser
 - **admin**：密碼不寫在程式裡。先設定環境變數 `SEED_ADMIN_PASSWORD`（或用 `--password "…"`），再執行 `python manage.py seed_admin`（`start.bat` 會轉送該變數；已存在的 admin 會略過，`--reset` 才會重設並解除登入鎖定）。密碼須通過密碼規則，建立或重設後 `must_change_password=True`，首次登入強制變更；指令不會印出密碼。
 - **其他使用者**：由管理員在帳號管理頁新增；密碼留空 → 系統產生臨時密碼（只顯示一次），`must_change_password=True`。
 - **登入防護**：django-axes——同一帳號失敗 5 次鎖 5 分鐘（`AXES_FAILURE_LIMIT`、`AXES_COOLOFF_MINUTES`，見 `backend/.env.example`）；`python manage.py axes_reset_username <帳號>` 可手動解鎖。經 Next 代理後所有人的來源位址相同，鎖定實際上是「每個帳號」：知道帳號名稱的人就能鎖住它，每次冷卻結束可再鎖（`AXES_IPWARE_*` 在沒裝 django-ipware 時完全無效；真正的 per-IP 限流要在平台邊緣做），細節見 `config/settings/base.py` 的 AXES 註解。session 為閒置逾時 8 小時（`SESSION_COOKIE_AGE`，`SESSION_SAVE_EVERY_REQUEST` 讓每次請求都續期）。
+- **變更密碼的猜密碼限制**：`POST /api/auth/change-password` 同一使用者 5 分鐘內連續 5 次沒能證明目前密碼，第 6 次起回 429 `too_many_attempts`，冷卻 5 分鐘（`PASSWORD_CHANGE_FAILURE_LIMIT`、`PASSWORD_CHANGE_COOLOFF_MINUTES`，見 `backend/.env.example`）。管理員重設密碼與 `seed_admin --reset` 會歸零。計數存在 Django cache：`REDIS_URL` 有值用 Redis，留空則用行程內記憶體（每個 worker 各算各的，多 worker 部署請設 `REDIS_URL`）；cache 連不上時放行並記 warning（不會 500）。pytest 一律改用行程內 cache（`backend/conftest.py`），不會碰 Redis。
 
 ### 既有環境升級（上線登入防護 P3 時）
 - **套件與資料表**：重建 api 映像（`backend/requirements.txt` 新增 `django-axes==8.3.1`），再執行 `docker compose exec -T api python manage.py migrate`（建立 axes 的資料表；`start.bat` 啟動時本來就會跑 migrate）。
@@ -327,7 +328,11 @@ python manage.py test apps.imports          # Excel parser 測試
 ```
 
 ### 前端
-（目前無 unit test；建議加入 vitest + React Testing Library）
+```bash
+npm run test:unit    # node --test lib/auth/*.test.ts：角色／路由政策（canAccess、homeFor、routeVerdict、safeNextPath）
+```
+沒有測試框架：Node 22.18 以上直接執行 `.ts`（內建型別剝除，不用建置）。被測的模組不能有執行期 import（Node 解析不了本專案不帶副檔名的 import 和 `@/` 別名，`import type` 會被剝掉所以可以），測試檔以 `.ts` 副檔名 import 它，`tsconfig.json` 因此開了 `allowImportingTsExtensions`。
+其餘元件目前沒有 unit test；建議加入 vitest + React Testing Library。
 
 ---
 

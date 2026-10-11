@@ -37,7 +37,8 @@ export async function login(employeeId: string, password: string): Promise<User>
 }
 
 export async function logout(): Promise<void> {
-  await apiFetch('/api/auth/logout', { method: 'POST' })
+  // Bounded: a hung backend must not keep the sign-out screen waiting for the proxy timeout.
+  await apiFetch('/api/auth/logout', { method: 'POST', timeoutMs: 8_000 })
 }
 
 export async function getMe(): Promise<User> {

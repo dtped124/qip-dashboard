@@ -243,7 +243,7 @@ export default function CategoryFormPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center py-24">
         <div className="text-gray-500">載入中…</div>
       </div>
     )
@@ -251,7 +251,7 @@ export default function CategoryFormPage() {
 
   if (!formData) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center py-24">
         <div className="text-red-500">{saveMsg?.text ?? '資料載入失敗'}</div>
       </div>
     )
@@ -263,7 +263,7 @@ export default function CategoryFormPage() {
   const formHasErrors = hasErrors(validations)
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div>
       {/* 頂部操作欄 */}
       <header className="bg-white border-b sticky top-0 z-10">
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3">

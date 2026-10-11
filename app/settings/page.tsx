@@ -1,26 +1,20 @@
 'use client';
 
 import Link from 'next/link';
-import { Settings, ListChecks, Database, Trash2, BarChart3, Bot, UserCog } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Settings, ListChecks, Database, Trash2, BarChart3, Bot, UserCog, ClipboardCheck } from 'lucide-react';
+import { useState } from 'react';
 import { clearAllData } from '@/lib/db/operations';
-import { getMe } from '@/lib/entry/api';
-import { isAdmin } from '@/lib/auth/roles';
+import { useAuthStore } from '@/lib/auth/store';
+import { hasRole, isAdmin } from '@/lib/auth/roles';
 
 export default function SettingsPage() {
   const [clearing, setClearing] = useState(false);
   const [cleared, setCleared] = useState(false);
-  // Admin-only entries are hidden until we know the user's roles. The backend
-  // enforces the permission regardless; this only decides what to show.
-  const [showAdmin, setShowAdmin] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    getMe()
-      .then((me) => { if (!cancelled) setShowAdmin(isAdmin(me.roles)); })
-      .catch(() => { /* not logged in: AuthGuard already redirects */ });
-    return () => { cancelled = true; };
-  }, []);
+  // Cards of other roles are not shown. The backend enforces the permissions
+  // regardless; this only decides what to show.
+  const roles = useAuthStore((s) => s.user?.roles);
+  const admin = isAdmin(roles);
+  const reviewer = hasRole(roles, 'reviewer');
 
   async function handleClearData() {
     if (!confirm('確定要清除所有資料嗎？此操作無法復原。\n（指標定義不會被刪除）')) return;
@@ -42,7 +36,7 @@ export default function SettingsPage() {
 
       <div className="grid gap-4">
         {/* 填報系統管理（管理員） */}
-        {showAdmin && (
+        {admin && (
           <Link
             href="/entry/admin"
             className="flex items-center gap-4 bg-white rounded-lg shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow"
@@ -57,33 +51,53 @@ export default function SettingsPage() {
           </Link>
         )}
 
-        {/* 指標管理 */}
-        <Link
-          href="/settings/indicators"
-          className="flex items-center gap-4 bg-white rounded-lg shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow"
-        >
-          <div className="p-3 bg-blue-50 rounded-lg">
-            <ListChecks size={24} className="text-blue-600" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-gray-800">指標管理</h2>
-            <p className="text-sm text-gray-500">檢視、新增、編輯指標定義和別名設定</p>
-          </div>
-        </Link>
+        {/* 填報審核（審核者；管理員同樣可用） */}
+        {reviewer && (
+          <Link
+            href="/entry/review"
+            className="flex items-center gap-4 bg-white rounded-lg shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow"
+          >
+            <div className="p-3 bg-teal-50 rounded-lg">
+              <ClipboardCheck size={24} className="text-teal-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-gray-800">填報審核</h2>
+              <p className="text-sm text-gray-500">各院區填報進度總覽、審核與退回填報（審核者、管理員）</p>
+            </div>
+          </Link>
+        )}
 
-        {/* TCPI 標竿匯入 */}
-        <Link
-          href="/settings/tcpi"
-          className="flex items-center gap-4 bg-white rounded-lg shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow"
-        >
-          <div className="p-3 bg-green-50 rounded-lg">
-            <BarChart3 size={24} className="text-green-600" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-gray-800">TCPI 標竿管理</h2>
-            <p className="text-sm text-gray-500">匯入醫策會 TCPI 年值報表，設定同儕標竿值</p>
-          </div>
-        </Link>
+        {/* 指標管理（管理員） */}
+        {admin && (
+          <Link
+            href="/settings/indicators"
+            className="flex items-center gap-4 bg-white rounded-lg shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow"
+          >
+            <div className="p-3 bg-blue-50 rounded-lg">
+              <ListChecks size={24} className="text-blue-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-gray-800">指標管理</h2>
+              <p className="text-sm text-gray-500">檢視、新增、編輯指標定義和別名設定</p>
+            </div>
+          </Link>
+        )}
+
+        {/* TCPI 標竿匯入（管理員） */}
+        {admin && (
+          <Link
+            href="/settings/tcpi"
+            className="flex items-center gap-4 bg-white rounded-lg shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow"
+          >
+            <div className="p-3 bg-green-50 rounded-lg">
+              <BarChart3 size={24} className="text-green-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-gray-800">TCPI 標竿管理</h2>
+              <p className="text-sm text-gray-500">匯入醫策會 TCPI 年值報表，設定同儕標竿值</p>
+            </div>
+          </Link>
+        )}
 
         {/* AI 深度分析 */}
         <Link

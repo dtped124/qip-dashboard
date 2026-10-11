@@ -4,10 +4,14 @@
  * 達文西下鑽面板（Phase 3 — QIP 沒有的能力）
  * 指標（院區層）→ 科別 → 執行醫師 → 術式 → 個案明細
  * 每層皆顯示分子/分母（0 事件顯示 0/n 而非 0%）。
+ * 個案明細（病歷號、醫師等逐案資料）僅審核者／管理員可看（後端 cases/ 同規則）：
+ * 其他人的最後一層分組不可再點、沒有「直接看個案」，也不會呼叫 cases/。
  */
 
 import { useCallback, useEffect, useState } from 'react';
 import { ChevronRight, Loader2, Users } from 'lucide-react';
+import { useAuthStore } from '@/lib/auth/store';
+import { canSeeDavinciCases } from '@/lib/auth/roles';
 import { fetchCases, fetchDrilldown } from '../lib/api';
 import type {
   DavinciCampus,
@@ -69,8 +73,10 @@ export function DrilldownPanel({ code, kind, unit, campus, periods, onScopeChang
   const [error, setError] = useState<string | null>(null);
 
   const unitLabel = fmtUnit(unit);
+  const canCases = canSeeDavinciCases(useAuthStore(s => s.user?.roles));
 
   const load = useCallback(async (c: Crumb) => {
+    if (c.level === 'cases' && !canCases) return; // 沒有個案權限：永遠不打 cases/
     setLoading(true);
     setError(null);
     try {
@@ -93,7 +99,7 @@ export function DrilldownPanel({ code, kind, unit, campus, periods, onScopeChang
     } finally {
       setLoading(false);
     }
-  }, [code, campus, period]);
+  }, [code, campus, period, canCases]);
 
   // 單一資料流：導覽只 setCrumb，fetch 統一由 crumb 變化驅動 —
   // 避免「setCrumb 沒配對 load()」造成麵包屑與表格脫鉤
@@ -113,11 +119,19 @@ export function DrilldownPanel({ code, kind, unit, campus, periods, onScopeChang
     onScopeChange?.({ dept: crumb.dept, surgeon: crumb.surgeon });
   }, [crumb.dept, crumb.surgeon, onScopeChange]);
 
-  const go = (c: Crumb) => setCrumb(c);
+  const go = (c: Crumb) => {
+    if (c.level === 'cases' && !canCases) return;
+    setCrumb(c);
+  };
+
+  // 目前這層的列能不能再點：最後一層分組之下就是個案明細，沒有個案權限的人到此為止
+  const levelIdx = seq.indexOf(crumb.level as Dim);
+  const rowsClickable = levelIdx !== -1 && (canCases || levelIdx + 1 < seq.length);
 
   const drill = (key: string) => {
     const idx = seq.indexOf(crumb.level as Dim);
     if (idx === -1) return; // cases 層不再下鑽
+    if (idx + 1 >= seq.length && !canCases) return;
     const next: Crumb = { level: idx + 1 < seq.length ? seq[idx + 1] : 'cases' };
     for (let i = 0; i < idx; i++) next[seq[i]] = crumb[seq[i]];
     next[seq[idx]] = key;
@@ -193,12 +207,16 @@ export function DrilldownPanel({ code, kind, unit, campus, periods, onScopeChang
             );
           })}
           {crumb.level !== 'cases' && (
-            <button
-              onClick={() => go({ level: 'cases', dept: crumb.dept, surgeon: crumb.surgeon, order: crumb.order })}
-              className="ml-2 px-2 py-0.5 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
-            >
-              直接看個案
-            </button>
+            canCases ? (
+              <button
+                onClick={() => go({ level: 'cases', dept: crumb.dept, surgeon: crumb.surgeon, order: crumb.order })}
+                className="ml-2 px-2 py-0.5 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
+              >
+                直接看個案
+              </button>
+            ) : (
+              <span className="ml-2 text-gray-400">個案明細僅審核者／管理員可檢視</span>
+            )
           )}
         </nav>
       </div>
@@ -229,8 +247,8 @@ export function DrilldownPanel({ code, kind, unit, campus, periods, onScopeChang
               const maxDen = Math.max(...rows.map(x => x.denominator), 1);
               return rows.map(r => (
                 <tr key={r.key}
-                    onClick={() => drill(r.key)}
-                    className="border-b border-gray-50 hover:bg-blue-50/50 cursor-pointer">
+                    onClick={rowsClickable ? () => drill(r.key) : undefined}
+                    className={`border-b border-gray-50 ${rowsClickable ? 'hover:bg-blue-50/50 cursor-pointer' : ''}`}>
                   <td className="py-2">{r.key}</td>
                   <td className="py-2 text-right whitespace-nowrap">
                     {kind === 'rate'
@@ -246,7 +264,7 @@ export function DrilldownPanel({ code, kind, unit, campus, periods, onScopeChang
                            style={{ width: `${(r.denominator / maxDen) * 100}%` }} />
                     </div>
                   </td>
-                  <td className="py-2 text-gray-300"><ChevronRight size={14} /></td>
+                  <td className="py-2 text-gray-300">{rowsClickable && <ChevronRight size={14} />}</td>
                 </tr>
               ));
             })()}

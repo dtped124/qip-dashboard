@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { getMe, getMyTasks } from '@/lib/entry/api'
-import type { CategoryTask, MyTasksResponse, RejectionNotice, User } from '@/lib/entry/types'
+import { getMyTasks } from '@/lib/entry/api'
+import { useAuthStore } from '@/lib/auth/store'
+import type { CategoryTask, MyTasksResponse, RejectionNotice } from '@/lib/entry/types'
 
 // ─── 輔助元件 ────────────────────────────────────────────────
 
@@ -133,39 +134,35 @@ function CategoryRow({ task }: { task: CategoryTask }) {
 // ─── 主頁面 ─────────────────────────────────────────────────
 
 export default function EntryHomePage() {
-  const [user, setUser] = useState<User | null>(null)
+  // The frame (EntryShell) shows the title bar and the logout; the user comes from the auth store.
+  const user = useAuthStore((s) => s.user)
   const [tasks, setTasks] = useState<MyTasksResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const init = async () => {
-      try {
-        const me = await getMe()
-        setUser(me)
-        if (!me.campus_code) {
-          setError('帳號未設定院區，請聯絡管理員')
-          return
-        }
-        // 使用本月（從 me 的 campus 取目前期間）
-        const now = new Date()
-        const twYear = now.getFullYear() - 1911
-        const month = now.getMonth() + 1
-        const data = await getMyTasks(twYear, month)
-        setTasks(data)
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : '載入失敗'
-        setError(msg)
-      } finally {
-        setLoading(false)
-      }
+    let cancelled = false
+    const now = new Date()
+    const twYear = now.getFullYear() - 1911
+    const month = now.getMonth() + 1
+    getMyTasks(twYear, month)
+      .then((data) => {
+        if (!cancelled) setTasks(data)
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : '載入失敗')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
     }
-    init()
   }, [])
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center py-24">
         <div className="text-gray-500">載入中…</div>
       </div>
     )
@@ -173,7 +170,7 @@ export default function EntryHomePage() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center py-24">
         <div className="text-red-500">{error}</div>
       </div>
     )
@@ -187,82 +184,68 @@ export default function EntryHomePage() {
     : Math.round((overall_progress.filled / overall_progress.total) * 100)
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* 頂部 Header */}
-      <header className="bg-white border-b px-4 py-3 flex items-center justify-between">
-        <h1 className="text-base font-semibold text-gray-800">QIP 指標填報系統</h1>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-gray-600">{user?.full_name ?? ''}</span>
-          <button
-            onClick={async () => {
-              const { logout } = await import('@/lib/entry/api')
-              await logout()
-              window.location.href = '/entry/login'
-            }}
-            className="text-sm text-gray-400 hover:text-gray-600"
-          >
-            登出
-          </button>
-        </div>
-      </header>
+    <main className="max-w-2xl mx-auto p-4 space-y-4">
+      {/* 期間 */}
+      <div className="bg-white rounded-lg border p-4">
+        <p className="text-sm text-gray-500">當前填報期間</p>
+        <p className="text-lg font-bold text-gray-800 mt-1">
+          {period.year} 年 {period.month} 月
+          {user?.campus_name && (
+            <span className="text-sm font-normal text-gray-500 ml-2">
+              · {user.campus_name}
+            </span>
+          )}
+        </p>
+        {/* 只提示、不阻擋：填報範圍由指標負責人指派決定，不靠帳號的院區（之後的 phase 會整理這一塊） */}
+        {user && !user.campus_code && (
+          <p className="mt-2 text-xs text-amber-600">
+            帳號尚未設定所屬院區；填報範圍依指標負責人指派決定，若下方清單是空的請聯絡管理員。
+          </p>
+        )}
+      </div>
 
-      <main className="max-w-2xl mx-auto p-4 space-y-4">
-        {/* 期間 */}
-        <div className="bg-white rounded-lg border p-4">
-          <p className="text-sm text-gray-500">當前填報期間</p>
-          <p className="text-lg font-bold text-gray-800 mt-1">
-            {period.year} 年 {period.month} 月
-            {user?.campus_name && (
-              <span className="text-sm font-normal text-gray-500 ml-2">
-                · {user.campus_name}
-              </span>
-            )}
+      {/* 逾期 / 截止日提醒 */}
+      <DeadlineBanner
+        daysRemaining={deadline.days_remaining}
+        twDeadlineDate={deadline.tw_deadline_date}
+        isOverdue={deadline.is_overdue}
+      />
+
+      {/* 退回通知 */}
+      <RejectionBanner notices={rejection_notices} />
+
+      {/* 整體進度 */}
+      <div className="bg-white rounded-lg border p-4">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-sm font-medium text-gray-700">本月整體完成度</p>
+          <p className="text-sm text-gray-500">
+            {overall_progress.filled}/{overall_progress.total} 指標已填
           </p>
         </div>
-
-        {/* 逾期 / 截止日提醒 */}
-        <DeadlineBanner
-          daysRemaining={deadline.days_remaining}
-          twDeadlineDate={deadline.tw_deadline_date}
-          isOverdue={deadline.is_overdue}
-        />
-
-        {/* 退回通知 */}
-        <RejectionBanner notices={rejection_notices} />
-
-        {/* 整體進度 */}
-        <div className="bg-white rounded-lg border p-4">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-gray-700">本月整體完成度</p>
-            <p className="text-sm text-gray-500">
-              {overall_progress.filled}/{overall_progress.total} 指標已填
-            </p>
-          </div>
-          <div className="bg-gray-200 rounded-full h-2">
-            <div
-              className="bg-blue-500 h-2 rounded-full transition-all"
-              style={{ width: `${overallPct}%` }}
-            />
-          </div>
-          <p className="text-right text-xs text-gray-400 mt-1">{overallPct}%</p>
+        <div className="bg-gray-200 rounded-full h-2">
+          <div
+            className="bg-blue-500 h-2 rounded-full transition-all"
+            style={{ width: `${overallPct}%` }}
+          />
         </div>
+        <p className="text-right text-xs text-gray-400 mt-1">{overallPct}%</p>
+      </div>
 
-        {/* 面向清單 */}
-        <div className="bg-white rounded-lg border overflow-hidden">
-          <div className="px-4 py-3 border-b">
-            <h2 className="text-sm font-semibold text-gray-700">我的填報進度</h2>
-          </div>
-          {categories.length === 0 ? (
-            <div className="p-6 text-center text-gray-400 text-sm">
-              本月無指派指標，請聯絡管理員
-            </div>
-          ) : (
-            categories.map((task) => (
-              <CategoryRow key={task.category_code} task={task} />
-            ))
-          )}
+      {/* 面向清單 */}
+      <div className="bg-white rounded-lg border overflow-hidden">
+        <div className="px-4 py-3 border-b">
+          <h2 className="text-sm font-semibold text-gray-700">我的填報進度</h2>
         </div>
-      </main>
-    </div>
+        {categories.length === 0 ? (
+          <div className="p-6 text-center text-gray-400 text-sm">
+            本月無指派指標，請聯絡管理員
+          </div>
+        ) : (
+          categories.map((task) => (
+            <CategoryRow key={task.category_code} task={task} />
+          ))
+        )}
+      </div>
+    </main>
   )
 }

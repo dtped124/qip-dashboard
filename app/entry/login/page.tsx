@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { login, changePassword, logout, getMe } from '@/lib/entry/api'
+import { login, changePassword, logout } from '@/lib/entry/api'
 import { ApiError } from '@/lib/http'
-import { homeFor } from '@/lib/auth/roles'
+import { homeFor, safeNextPath } from '@/lib/auth/roles'
+import { useAuthStore } from '@/lib/auth/store'
 import type { User } from '@/lib/entry/types'
 
 const NO_ROLE_MESSAGE = '此帳號尚未指派身分，請聯絡品管中心'
@@ -34,6 +35,9 @@ function changePasswordErrorMessage(e: unknown): string {
 
 export default function LoginPage() {
   const router = useRouter()
+  const ensureLoaded = useAuthStore((s) => s.ensureLoaded)
+  const setSessionUser = useAuthStore((s) => s.setUser)
+  const clearSession = useAuthStore((s) => s.clear)
   const [employeeId, setEmployeeId] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -48,37 +52,53 @@ export default function LoginPage() {
   const [confirmPwd, setConfirmPwd] = useState('')
   const [changingPwd, setChangingPwd] = useState(false)
 
-  // Already signed in but obliged to change the password (reloaded mid-flow, or AuthGuard sent us
-  // here): go straight to the form instead of losing the obligation with the page state.
+  /**
+   * Leave the login page: for the page the guard sent us from (`?next=`, if it is safe and the user may open
+   * it), else for the landing page of the user's roles. Returns false (with an error shown) when the account
+   * has no role yet.
+   */
+  const leave = useCallback(
+    (user: User): boolean => {
+      // window.location, not useSearchParams: that would need a Suspense boundary around the whole app.
+      const next = new URLSearchParams(window.location.search).get('next')
+      const target = safeNextPath(next, user.roles, window.location.origin) ?? homeFor(user.roles)
+      if (target === null) {
+        // Do not leave a usable session behind for an account that has no role yet.
+        logout().catch(() => {})
+        clearSession()
+        setError(NO_ROLE_MESSAGE)
+        return false
+      }
+      router.replace(target)
+      return true
+    },
+    [router, clearSession],
+  )
+
+  // Already signed in (the store asks the server once): either obliged to change the password - go straight to
+  // that form instead of losing the obligation with the page state - or just on the wrong page: move on.
   useEffect(() => {
+    // The route guard signed this user out because the account has no role (it lost them while signed in).
+    if (new URLSearchParams(window.location.search).get('reason') === 'no_role') setError(NO_ROLE_MESSAGE)
+
     let cancelled = false
-    getMe()
+    ensureLoaded()
       .then((user) => {
-        if (!cancelled && user.must_change_password) {
+        if (cancelled || !user) return
+        if (user.must_change_password) {
           setLoggedInUser(user)
           setShowChangePassword(true)
+        } else {
+          leave(user)
         }
       })
       .catch(() => {
-        // Not signed in: the login form stays.
+        // The server could not be asked: the login form stays.
       })
     return () => {
       cancelled = true
     }
-  }, [])
-
-  /** Go to the landing page of the user's role; false (with an error shown) if the account has no role yet. */
-  const navigateByRole = (user: User): boolean => {
-    const home = homeFor(user.roles)
-    if (home === null) {
-      // Do not leave a usable session behind for an account that has no role yet.
-      logout().catch(() => {})
-      setError(NO_ROLE_MESSAGE)
-      return false
-    }
-    router.push(home)
-    return true
-  }
+  }, [ensureLoaded, leave])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -90,11 +110,12 @@ export default function LoginPage() {
     setError(null)
     try {
       const user = await login(employeeId, password)
+      setSessionUser(user)
       if (user.must_change_password) {
         setLoggedInUser(user)
         setShowChangePassword(true)
       } else {
-        navigateByRole(user)
+        leave(user)
       }
     } catch (e: unknown) {
       setError(loginErrorMessage(e))
@@ -127,8 +148,11 @@ export default function LoginPage() {
     setError(null)
     try {
       await changePassword(currentPassword, newPwd)
+      // The obligation is over: the route guard would send the user straight back here if the store still said otherwise.
+      const updated: User = { ...loggedInUser!, must_change_password: false }
+      setSessionUser(updated)
       // No role: leave the password form and show the message on the login screen.
-      if (!navigateByRole(loggedInUser!)) setShowChangePassword(false)
+      if (!leave(updated)) setShowChangePassword(false)
     } catch (e: unknown) {
       setError(changePasswordErrorMessage(e))
     } finally {
@@ -143,6 +167,7 @@ export default function LoginPage() {
     } catch {
       // The session may already be gone; the login form is the right place to land either way.
     }
+    clearSession()
     setShowChangePassword(false)
     setLoggedInUser(null)
     setPassword('')

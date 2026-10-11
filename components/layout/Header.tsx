@@ -3,10 +3,11 @@
 import { useDashboardStore } from '@/lib/store/dashboardStore';
 import { Search, Upload, LogOut } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import { ImportWizard } from '@/components/import/ImportWizard';
 import { ExportElementListButton } from '@/components/layout/ExportElementListButton';
-import { logout } from '@/lib/entry/api';
+import { useAuthStore } from '@/lib/auth/store';
+import { useLogout } from '@/lib/auth/useLogout';
+import { canViewDashboard, isAdmin } from '@/lib/auth/roles';
 
 /** 即時時鐘 + 心跳脈搏，證明應用仍在運行 */
 function HeartbeatClock() {
@@ -40,16 +41,8 @@ export function Header() {
   const searchQuery = useDashboardStore(s => s.searchQuery);
   const setSearchQuery = useDashboardStore(s => s.setSearchQuery);
   const [showImport, setShowImport] = useState(false);
-  const router = useRouter();
-
-  const handleLogout = async () => {
-    try {
-      await logout();
-    } catch {
-      // 即使 API 失敗仍跳轉
-    }
-    router.replace('/entry/login');
-  };
+  const roles = useAuthStore(s => s.user?.roles);
+  const handleLogout = useLogout();
 
   return (
     <>
@@ -78,17 +71,19 @@ export function Header() {
           />
         </div>
 
-        {/* 匯出要素清單（依當前院區） */}
-        <ExportElementListButton />
+        {/* 匯出要素清單（依當前院區）：讀者 */}
+        {canViewDashboard(roles) && <ExportElementListButton />}
 
-        {/* 匯入按鈕 */}
-        <button
-          onClick={() => setShowImport(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
-        >
-          <Upload size={16} />
-          匯入資料
-        </button>
+        {/* 匯入按鈕：僅管理員 */}
+        {isAdmin(roles) && (
+          <button
+            onClick={() => setShowImport(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+          >
+            <Upload size={16} />
+            匯入資料
+          </button>
+        )}
 
         {/* 登出 */}
         <button

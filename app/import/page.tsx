@@ -82,7 +82,8 @@ export default function ImportPage() {
   function toggleExpand(logId: number) {
     setExpandedLogs(prev => {
       const next = new Set(prev);
-      next.has(logId) ? next.delete(logId) : next.add(logId);
+      if (next.has(logId)) next.delete(logId);
+      else next.add(logId);
       return next;
     });
   }

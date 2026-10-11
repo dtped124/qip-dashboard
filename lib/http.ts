@@ -60,11 +60,10 @@ type AuthErrorHandler = (err: ApiError) => void
 
 const authErrorHandlers: AuthErrorHandler[] = []
 
-// No callers yet: AuthGuard wires this up when role-based routing lands (Phase 4).
 /**
- * Register a handler that runs whenever any request fails with 401/403 (e.g.
- * to send the user to the login page). The failing request still rejects
- * afterwards. Returns an unsubscribe function.
+ * Register a handler that runs whenever any request fails with 401/403 (lib/auth/store.ts
+ * uses it to forget a session the backend no longer knows). The failing request still
+ * rejects afterwards. Returns an unsubscribe function.
  */
 export function onAuthError(handler: AuthErrorHandler): () => void {
   // Wrap so that registering the same function twice gives independent subscriptions.
@@ -322,15 +321,4 @@ export async function downloadFile(path: string): Promise<{ blob: Blob; filename
     blob: await res.blob(),
     filename: parseContentDisposition(res.headers.get('content-disposition')),
   }))
-}
-
-/**
- * Fetch a static file that Next itself serves from /public (e.g. /sample.xls).
- * Not an API call: never prefixed with API_BASE, uses the browser's default
- * credentials mode, no CSRF header, no timeout.
- */
-export async function fetchPublicFile(path: string): Promise<Blob> {
-  const res = await fetch(path)
-  if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status)
-  return res.blob()
 }
