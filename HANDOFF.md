@@ -1,4 +1,4 @@
-# HANDOFF 2026-10-11 22:10
+# HANDOFF 2026-10-12 08:40
 - 任務：qip-dashboard 上雲＋角色分流（8 phase，一 phase 一 branch）。計畫檔：`C:\Users\akcho\.claude\plans\streamed-weaving-spindle.md`；拍板決策見記憶 `project_cloud_role_rollout.md`。
 - 已完成：
   - **P1 `feat/same-origin-api`**（已合併 master `987abc5`，已推 origin）：`lib/http.ts` 統一 HTTP client、Next rewrites 代理 `/api/*`、前端全改相對路徑、Django `USE_X_FORWARDED_HOST`、TCPI POST 改讀 `request.data`。
