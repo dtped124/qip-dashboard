@@ -139,19 +139,21 @@ def run(login_id="T123", password=SECRET, conf=None):
 
 
 def test_the_suite_is_armed_against_a_real_ad(settings):
-    """Without a fake_ad fixture, any attempt to open a connection must blow up instead of reaching a network."""
+    """Without a fake_ad fixture, any attempt to open a connection must fail the test instead of reaching a network."""
     import ldap3
 
     assert settings.LDAP["ENABLED"] is False
-    with pytest.raises(AssertionError, match="real LDAP connection attempted in tests"):
+    with pytest.raises(pytest.fail.Exception, match="real LDAP connection attempted in tests"):
         ldap3.Connection("ad.example.test")
-    with pytest.raises(AssertionError, match="real LDAP connection attempted in tests"):
+    with pytest.raises(pytest.fail.Exception, match="real LDAP connection attempted in tests"):
         ad.Connection("ad.example.test")
 
 
 def test_an_unfaked_check_is_an_error_not_a_network_call():
-    """The stub's AssertionError is swallowed like any other service-step failure: the result is an error."""
-    assert ad.authenticate("T123", SECRET, conf=CONF).status == "error"
+    """The stub fails the test (a BaseException), so ``authenticate``'s ``except Exception`` cannot turn it into an
+    ``error`` result: an un-faked AD call is never silently tolerated."""
+    with pytest.raises(pytest.fail.Exception, match="real LDAP connection attempted in tests"):
+        ad.authenticate("T123", SECRET, conf=CONF)
 
 
 # ── Results ──────────────────────────────────────────────────────
@@ -471,8 +473,13 @@ def test_the_login_id_pattern_is_the_documented_one():
     assert ad.AD_ATTRIBUTES == ["sAMAccountName", "sn", "givenName", "displayName", "mail", "department"]
 
 
-def test_the_password_is_marked_sensitive_for_error_reports():
-    assert "password" in getattr(ad.authenticate, "sensitive_variables", ())
+def test_all_local_variables_are_hidden_from_error_reports():
+    """Not just ``password``: ``repr(ldap3.Connection)`` contains the password it was built with, so the connection
+    objects (and ``conf``, with the bind password) must be hidden too - ``sensitive_variables()`` hides everything."""
+    from apps.accounts.backends import LdapBackend
+
+    assert ad.authenticate.sensitive_variables == "__ALL__"
+    assert LdapBackend.authenticate.sensitive_variables == "__ALL__"
 
 
 def test_ldap_unavailable_is_not_a_permission_error():

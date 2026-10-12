@@ -9,6 +9,9 @@ from apps.accounts.lockout import AccountLocked, is_locked_out
 from apps.accounts.models import User, UserRole
 from apps.accounts.passwords import generate_temporary_password, password_problems
 
+# Shared with the Django admin form (admin.py): employee_id is unique case-sensitively in the database only.
+DUPLICATE_EMPLOYEE_ID_MESSAGE = "此帳號已存在（帳號不分大小寫）"
+
 # AD-related answers. Defined here and not in exceptions.py: that module imports rest_framework.views, which imports
 # the default permission class (see the note on PasswordChangeRequired in permissions.py). Same body shape as
 # lockout.AccountLocked: {"detail": ..., "code": ...} (the exception handler adds the code).
@@ -203,7 +206,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
         # The unique constraint is case sensitive, AD (and the login) are not: "abc" and "ABC" would be two
         # accounts for one person.
         if User.objects.filter(employee_id__iexact=value).exists():
-            raise serializers.ValidationError("此帳號已存在（帳號不分大小寫）")
+            raise serializers.ValidationError(DUPLICATE_EMPLOYEE_ID_MESSAGE)
         return value
 
     def validate(self, attrs):

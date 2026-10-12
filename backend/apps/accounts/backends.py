@@ -181,7 +181,7 @@ def provision_from_ad(result, login_id: str = ""):
 class LdapBackend(ModelBackend):
     """AD sign-in; see the module docstring. Session loading (``get_user``) is ``ModelBackend``'s."""
 
-    @sensitive_variables("password")
+    @sensitive_variables()
     def authenticate(self, request, username=None, password=None, **kwargs):
         if request is not None:
             request.ldap_status = None

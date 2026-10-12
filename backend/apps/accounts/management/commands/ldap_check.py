@@ -18,8 +18,11 @@ Modes (all need LDAP_ENABLED=true; otherwise the command stops with an error):
                                               whose AD name differs from the system name. Accounts on
                                               LDAP_LOCAL_ONLY_ACCOUNTS never use AD and are left out of the findings.
 
+--audit also lists the seed account `admin` when it is not in AD, but only as a note (keep it by listing it in
+LDAP_LOCAL_ONLY_ACCOUNTS); any other administrator who is not in AD prints a WARNING and exits with code 2.
+
 Exit code: 0 when the mode did what it was asked; non-zero (CommandError) when AD is off, the bind fails, the person
-is not found / the login is refused, or AD cannot be asked.
+is not found / the login is refused, AD cannot be asked, or (--audit) an administrator other than `admin` is not in AD.
 """
 import getpass
 
@@ -28,6 +31,8 @@ from django.core.management.base import BaseCommand, CommandError
 
 from apps.accounts import ldap as ad
 from apps.accounts.models import User, UserRole
+
+SEED_ADMIN_ID = "admin"  # the account `seed_admin` creates; listed but not warned about (see _audit)
 
 
 def _squash(name: str) -> str:
@@ -170,13 +175,23 @@ class Command(BaseCommand):
 
         self.stdout.write(f"audited {checked} active local account(s); {skipped} local-only account(s) skipped")
         self.stdout.write(f"not in AD, cannot sign in once AD is on: {len(missing)}")
+        real_admins_missing = 0
         for user, state in missing:
-            marker = "[ADMIN] " if user.is_superuser or UserRole.ADMIN.value in user.role_set() else ""
+            is_admin = user.is_superuser or UserRole.ADMIN.value in user.role_set()
+            seed_admin = is_admin and user.employee_id.strip().casefold() == SEED_ADMIN_ID
+            marker = "[ADMIN] " if is_admin else ""
             reason = "more than one AD entry" if state == "ambiguous" else "not found"
-            self.stdout.write(f"  {marker}{user.employee_id}  {user.full_name}  ({reason})")
-        if any(user.is_superuser or UserRole.ADMIN.value in user.role_set() for user, _ in missing):
+            note = ""
+            if seed_admin:
+                note = "  (seed 管理者；要保留請列入 LDAP_LOCAL_ONLY_ACCOUNTS)"
+            elif is_admin:
+                real_admins_missing += 1
+            self.stdout.write(f"  {marker}{user.employee_id}  {user.full_name}  ({reason}){note}")
+        if real_admins_missing:
             self.stdout.write("  WARNING: an administrator is missing from AD - nobody could manage accounts "
                               "except via LDAP_LOCAL_ONLY_ACCOUNTS")
         self.stdout.write(f"AD name differs from the system name: {len(different)}")
         for user, ad_name in different:
             self.stdout.write(f"  {user.employee_id}  system={user.full_name}  ad={ad_name}")
+        if real_admins_missing:
+            raise CommandError(f"{real_admins_missing} administrator account(s) are not in AD", returncode=2)

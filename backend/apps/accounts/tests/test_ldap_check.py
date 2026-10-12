@@ -226,7 +226,12 @@ def test_audit_lists_accounts_missing_from_ad_marks_administrators_and_finds_nam
     User.objects.filter(employee_id="T123").update(full_name="陳 小明")  # spaces do not count as a difference
     User.objects.filter(employee_id="T124").update(full_name="王大華")
 
-    text = run("--audit")
+    out = io.StringIO()
+    with pytest.raises(CommandError) as raised:  # "boss" is an administrator who is not in AD
+        call_command("ldap_check", "--audit", stdout=out)
+    text = out.getvalue()
+    assert raised.value.returncode == 2
+    assert "1 administrator account(s) are not in AD" in str(raised.value)
 
     assert "audited 4 active local account(s); 1 local-only account(s) skipped" in text
     assert re.search(r"\[ADMIN\] boss\b", text)
@@ -239,6 +244,54 @@ def test_audit_lists_accounts_missing_from_ad_marks_administrators_and_finds_nam
     assert directory.unbound == 1
     searched = " ".join(directory.searches)
     assert "breakglass" not in searched and "T300" not in searched
+
+
+def test_audit_lists_the_seed_admin_with_a_note_but_neither_warns_nor_fails(ad_on, directory, make_user):
+    make_user("admin", ["admin"], is_superuser=True, is_staff=True)  # the seed administrator, not in AD
+    make_user("T123", ["viewer"])
+    directory.people["t123"] = [person("T123")]
+    User.objects.filter(employee_id="T123").update(full_name="陳小明")
+
+    text = run("--audit")  # exit code 0: no CommandError
+
+    assert re.search(r"\[ADMIN] admin .*seed 管理者；要保留請列入 LDAP_LOCAL_ONLY_ACCOUNTS", text)
+    assert "WARNING" not in text
+
+
+def test_audit_seed_admin_in_any_letter_case_is_still_the_seed_admin(ad_on, directory, make_user):
+    make_user("ADMIN", ["admin"])
+
+    text = run("--audit")
+
+    assert "seed 管理者" in text and "WARNING" not in text
+
+
+def test_audit_fails_with_exit_code_2_when_another_administrator_is_missing_besides_the_seed_admin(
+    ad_on, directory, make_user
+):
+    make_user("admin", ["admin"], is_superuser=True)
+    make_user("boss", ["admin"])
+    out = io.StringIO()
+
+    with pytest.raises(CommandError) as raised:
+        call_command("ldap_check", "--audit", stdout=out)
+
+    assert raised.value.returncode == 2
+    assert "1 administrator account(s) are not in AD" in str(raised.value)  # only boss counts
+    assert "WARNING: an administrator is missing from AD" in out.getvalue()
+
+
+def test_audit_exits_0_when_only_non_administrators_are_missing_or_names_differ(ad_on, directory, make_user):
+    make_user("T200", ["viewer"])  # not in AD
+    make_user("T124", ["viewer"])  # in AD under another name
+    directory.people["t124"] = [person("T124")]
+    User.objects.filter(employee_id="T124").update(full_name="王大華")
+
+    text = run("--audit")  # no CommandError
+
+    assert "not in AD, cannot sign in once AD is on: 1" in text
+    assert "AD name differs from the system name: 1" in text
+    assert "WARNING" not in text
 
 
 def test_audit_with_everybody_in_ad_reports_nothing_to_fix(ad_on, directory, make_user):

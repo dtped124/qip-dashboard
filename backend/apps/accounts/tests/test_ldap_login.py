@@ -725,6 +725,62 @@ def test_switching_ad_off_turns_an_open_ad_session_into_a_local_one(local_user, 
     assert "current_password" in body(wrong)
 
 
+# ── Switch-over: a local session opened while AD was off ─────────
+
+
+def test_a_local_session_opened_before_ad_was_enabled_stops_working_once_ad_is_on(
+    local_user, anon, monkeypatch, settings, caplog
+):
+    fake = fake_ldap(monkeypatch, "success")
+    assert login(anon, "T123", GOOD_PASSWORD).status_code == 200  # AD off: a plain local sign-in
+    assert anon.get("/api/auth/me").status_code == 200
+
+    ldap_on(settings)  # empty local-only list: nobody keeps a local door
+    with caplog.at_level(logging.INFO, logger="apps.accounts.authentication"):
+        me = anon.get("/api/auth/me")
+
+    assert (me.status_code, body(me)["code"]) == (403, "not_authenticated")
+    assert "session invalidated after AD was enabled employee_id=T123" in caplog.text
+    dashboard = anon.get("/api/v1/dashboard/")
+    assert (dashboard.status_code, body(dashboard)["code"]) == (403, "not_authenticated")
+    assert fake.calls == []  # the session is refused without asking AD
+    assert BACKEND_SESSION_KEY not in anon.session  # and it was flushed, not just ignored
+
+
+def test_a_local_only_account_keeps_its_local_session_when_ad_is_enabled(local_user, anon, monkeypatch, settings):
+    fake = fake_ldap(monkeypatch, "success")
+    assert login(anon, "T123", GOOD_PASSWORD).status_code == 200
+
+    ldap_on(settings, LOCAL_ONLY_ACCOUNTS={"t123"})
+
+    me = anon.get("/api/auth/me")
+    assert me.status_code == 200
+    assert body(me)["auth_method"] == "local"
+    assert anon.get("/api/v1/dashboard/").status_code == 200
+    assert fake.calls == []
+
+
+def test_an_ad_session_survives_the_switch_check(local_user, anon, monkeypatch, settings):
+    ldap_on(settings)
+    fake_ldap(monkeypatch, "success")
+    assert ad_login(anon, "T123").status_code == 200
+    assert anon.session[BACKEND_SESSION_KEY] == LDAP_BACKEND
+
+    assert anon.get("/api/auth/me").status_code == 200
+    assert anon.get("/api/v1/dashboard/").status_code == 200
+
+
+def test_switching_ad_on_and_off_again_leaves_a_local_session_alone_if_it_was_never_checked(
+    local_user, anon, settings
+):
+    assert login(anon, "T123", GOOD_PASSWORD).status_code == 200
+    ldap_on(settings)
+    ldap_on(settings, ENABLED=False)  # switched back before the session made a single request
+
+    assert anon.get("/api/auth/me").status_code == 200
+    assert anon.get("/api/v1/dashboard/").status_code == 200
+
+
 # ── Row 27: LDAP_AUTO_CREATE ─────────────────────────────────────
 
 AD_PERSON = {"sn": "林", "givenName": "志明", "mail": "T200@example.test"}

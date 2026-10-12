@@ -130,7 +130,7 @@ def _close(*connections) -> None:
 # ── The two-step check ───────────────────────────────────────────
 
 
-@sensitive_variables("password", "conf")
+@sensitive_variables()
 def authenticate(login_id: str, password: str, conf: dict | None = None) -> LdapResult:
     """Check ``login_id`` / ``password`` against AD; ``conf`` defaults to ``settings.LDAP``."""
     if conf is None:
