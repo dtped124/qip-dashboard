@@ -9,6 +9,7 @@
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from apps.indicators.cache import bump_dashboard_cache
 from apps.indicators.models import (
     Alert,
     DataPoint,
@@ -53,4 +54,7 @@ class Command(BaseCommand):
             if not options["keep_logs"]:
                 ImportLog.objects.all().delete()
 
+        # After the commit, not inside the transaction: a reader that sees the new version before the commit would
+        # read the old rows and file them under it.
+        bump_dashboard_cache()
         self.stdout.write(self.style.SUCCESS("[OK] 已清空。請到 /import 重新匯入資料。"))

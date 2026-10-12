@@ -129,24 +129,61 @@ def database_config(env, schema):
 
 DATABASES = {"default": database_config(env, DB_SCHEMA)}
 
-# Cache — Redis when REDIS_URL is set. Empty or unset: per-process memory (LocMem), which is fine for one
-# process (and for tests) but keeps separate counters per worker, so give a multi-worker deployment a Redis.
-# Today the cache only holds the change-password attempt counters (apps/accounts/password_throttle.py).
+
+def cache_config(env):
+    """Return CACHES["default"] built from the environment.
+
+    REDIS_URL set: Redis, where connecting and every reply give up after REDIS_SOCKET_TIMEOUT seconds. What redis-py
+    does without it depends on its release: older ones never time out (a Redis that stops answering instead of refusing
+    the connection holds every request that touches the cache for as long as the operating system waits - minutes),
+    newer ones default to 5 seconds. Pinned here, the wait is the same everywhere. The callers (the change-password
+    limit, the dashboard cache) treat a failed call as "no cache" and carry on.
+    REDIS_URL empty or unset: per-process memory (LocMem). That is enough for tests and for the change-password counters
+    of a single worker, but every process then has its own copy: the counters count per worker, and the dashboard cache
+    is off by default (see dashboard_cache_settings). Give a multi-worker deployment a Redis.
+    """
+    redis_url = env("REDIS_URL", default="")
+    timeout = env.float("REDIS_SOCKET_TIMEOUT", default=2.0)
+    if timeout <= 0:
+        # 0 would make the socket non-blocking, so every call would fail at once; a negative value is not a timeout
+        raise ImproperlyConfigured("REDIS_SOCKET_TIMEOUT must be greater than 0 (seconds)")
+    if not redis_url:
+        return {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "qip-default"}
+    return {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": redis_url,
+        "OPTIONS": {"socket_connect_timeout": timeout, "socket_timeout": timeout},
+    }
+
+
+def dashboard_cache_settings(env, redis_url):
+    """Return (DASHBOARD_CACHE_ENABLED, DASHBOARD_CACHE_TTL) built from the environment.
+
+    GET /api/v1/dashboard/ is answered from the cache (apps/indicators/cache.py) until a write that can change it bumps
+    the version, or DASHBOARD_CACHE_TTL seconds have passed (the only remedy when a bump fails, e.g. Redis unreachable).
+    DASHBOARD_CACHE_ENABLED=false computes every request from the database, as before the cache existed.
+
+    The switch defaults to on only when a Redis is configured. With the per-process memory cache every process holds
+    its own copy, and a write made in another process - a management command (wipe_datapoints, refresh_alerts,
+    bootstrap's seed_indicators) or another gunicorn worker - can never invalidate the copy the web process serves, not
+    even with a single worker: it would show old data until the TTL ends. An explicit true still turns it on (then only
+    the TTL protects against such writes); an explicit false turns it off whatever REDIS_URL says.
+    """
+    enabled = env.bool("DASHBOARD_CACHE_ENABLED", default=bool(redis_url))
+    ttl = env.int("DASHBOARD_CACHE_TTL", default=600)
+    if ttl < 1:
+        # Django reads 0 as "do not keep it" and a negative value as "already expired": every request would miss.
+        raise ImproperlyConfigured(
+            "DASHBOARD_CACHE_TTL must be at least 1 second (DASHBOARD_CACHE_ENABLED=false turns the cache off)"
+        )
+    return enabled, ttl
+
+
+# Cache — holds the change-password attempt counters (apps/accounts/password_throttle.py) and the dashboard
+# payloads (apps/indicators/cache.py).
 REDIS_URL = env("REDIS_URL", default="")
-if REDIS_URL:
-    CACHES = {
-        "default": {
-            "BACKEND": "django.core.cache.backends.redis.RedisCache",
-            "LOCATION": REDIS_URL,
-        }
-    }
-else:
-    CACHES = {
-        "default": {
-            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-            "LOCATION": "qip-default",
-        }
-    }
+CACHES = {"default": cache_config(env)}
+DASHBOARD_CACHE_ENABLED, DASHBOARD_CACHE_TTL = dashboard_cache_settings(env, REDIS_URL)
 
 # Internationalization
 LANGUAGE_CODE = "zh-hant"

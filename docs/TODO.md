@@ -108,7 +108,7 @@
 - [ ] 英文介面（目前僅繁中）
 
 ### 14. 效能
-- [ ] 儀表板 `/api/v1/dashboard/` 快取（redis）
+- [x] 儀表板 `/api/v1/dashboard/` 快取（redis）— P8：版本號失效、`X-Dashboard-Cache` 標頭、fail-open，見 CHANGELOG
 - [ ] Indicator.PATCH 後的 `_refresh_indicator_alerts()` 改非同步（需要時再引入任務佇列；celery 已於 P7 自 requirements 移除）
 - [ ] 大量匯入改用 `bulk_create` + `update_fields`
 

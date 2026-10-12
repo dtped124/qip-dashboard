@@ -11,7 +11,7 @@ TLS、網域、反向代理／負載平衡器、託管資料庫、每 IP 限流�
                                                    ▼
                                                   api  Django + gunicorn :8000     ← 僅內網
                                                    ├──▶ db     PostgreSQL（schema qip）
-                                                   └──▶ redis  Django cache（變更密碼的猜測次數）
+                                                   └──▶ redis  Django cache（變更密碼的猜測次數、儀表板算好的回應）
 ```
 
 - 瀏覽器只連 web，`/api/*` 對它是同源，所以不需要 CORS，cookie 是同源 cookie。
@@ -112,7 +112,10 @@ docker builder prune -f --filter until=24h        # 清掉超過一天沒用到�
 | `DB_CONNECT_TIMEOUT` | 否（預設 5） | 連不上資料庫時每次嘗試等幾秒；`DATABASE_URL` 自帶的 `connect_timeout` 優先；0 = 不設逾時 |
 | `SEED_ADMIN_PASSWORD` | 首次 | 建立 `admin` 帳號的初始密碼（須通過密碼規則）；帳號已存在就略過，登入後建議從環境移除 |
 | `API_INTERNAL_URL`（build） | 是 | web 容器看出去的 api 位址，compose 內是 `http://api:8000`；換位址要重新 build web |
-| `REDIS_URL` | 建議 | 留空則每個 worker 各用記憶體，變更密碼的猜測次數各算各的 |
+| `REDIS_URL` | 建議 | 留空 = 每個行程各用自己的記憶體：變更密碼的猜測次數各算各的，**儀表板快取預設關閉**（別的行程——管理指令、其他 worker——的寫入清不到 web 行程記憶體裡的那一份，單一 worker 也一樣）。要快取、或有多個 worker，就填 |
+| `REDIS_SOCKET_TIMEOUT` | 否（預設 2） | 連 Redis、等 Redis 回覆各最多等幾秒（> 0，可帶小數）；逾時視為 cache 不可用，請求照常處理 |
+| `DASHBOARD_CACHE_ENABLED` | 否（預設：有填 `REDIS_URL` 才開） | 明設 true／false 蓋過預設。false = 儀表板每次重新計算（回應標頭 `X-Dashboard-Cache: BYPASS`），關閉期間的寫入仍讓版本號前進，之後再開不會讀到舊內容；沒有 Redis 還設 true，別的行程的寫入清不掉這份快取，只能等 TTL |
+| `DASHBOARD_CACHE_TTL` | 否（預設 600） | 儀表板快取的保底存活秒數（至少 1，否則拒絕啟動）；資料變動會立刻使快取失效，TTL 只在「失效通知沒送成」（例如當時 Redis 連不上）時才有作用 |
 | `CSRF_TRUSTED_ORIGINS` | 視情況 | 含 scheme 的對外來源（`https://qip.example.org`）。同源代理下通常不必填；平台改寫了 Host 或 scheme、POST 被擋時才填 |
 | `SECURE_HSTS_SECONDS`、`NEXT_HSTS_SECONDS`（build） | 否 | HTTPS 確認可用後再分段調高，見 §7-3 |
 | `SESSION_COOKIE_SECURE`、`CSRF_COOKIE_SECURE` | 否（預設 true） | 上線不要動 |
@@ -144,6 +147,7 @@ api 容器的入口 `qip-entrypoint` 每次啟動都會：
 - **日誌**：全部寫 stdout／stderr（gunicorn access log、`django.request` 的 4xx／5xx 含 traceback、`axes` 的登入失敗與鎖定），交給平台收集。
 - **靜態檔**：admin 用的 CSS／JS 在 build 時 `collectstatic`，由 WhiteNoise 在 `/static/` 提供。上傳的檔案（`/app/media`）**不會**被對外提供。
 - **JSON 專用**：prod 的 DRF 只輸出 JSON（沒有可瀏覽的 API 頁面）。
+- **儀表板快取**：`GET /api/v1/dashboard/` 算好的回應存在 Django cache（Redis），key 是 `dashboard:v<版本>:<campus>:<category>:<search>`，版本號在 `dashboard:version`（沒有過期時間）。**預設只在有填 `REDIS_URL` 時開啟**（`DASHBOARD_CACHE_ENABLED` 明設 true／false 可蓋過）：沒有 Redis 時每個行程各用自己的記憶體，管理指令（`wipe_datapoints`、`refresh_alerts`、`seed_indicators` 都在獨立的行程裡跑）與其他 worker 的 bump 清不到 web 行程記憶體裡的那一份，單一 worker 也一樣，會一直回舊資料到 TTL 為止——所以請用 Redis，或保持關閉。任何會改變儀表板的寫入——Excel 匯入、修正資料點、改目標值、TCPI 匯入、Django 後台編輯、`seed_indicators`／`refresh_alerts`／`wipe_datapoints`——完成後都讓版本號加 1，舊內容就不會再被讀到（TTL 到了自動消失）。**每次容器啟動的 `bootstrap` 會跑 `seed_indicators`，所以每次部署也會清一次**；要手動清（需要 Redis；記憶體快取跨不了行程，`manage.py shell` 裡的 bump 清不到 web 行程）：`exec api python manage.py shell -c "from apps.indicators.cache import bump_dashboard_cache; bump_dashboard_cache()"`。回應標頭 `X-Dashboard-Cache`：`HIT`（取自快取）、`MISS`（重新計算並存入）、`BYPASS`（沒用到快取：已關閉——包含沒有 Redis 的預設——、Redis 連不上、或請求的 key 太長）。內容不分角色（權限檢查在讀快取之前）。**記憶體**：每份 payload 約 150–280 KB，通常每院區一份（三院區不到 1 MB）；失效後舊版本的內容不會被刪，放到 TTL 到期，所以 TTL 內每多一次寫入就多一輪（最壞約 院區數 × 寫入次數 × 280 KB）。Redis 不通時照常運作（記 warning、重新計算），代價是那段時間的寫入沒能通知失效：Redis 恢復後最久 `DASHBOARD_CACHE_TTL` 秒內可能讀到舊內容。Redis 的 `maxmemory-policy` 請用 `noeviction` 或 `volatile-*`（版本號沒有過期時間，不會被 `volatile-*` 逐出）；`allkeys-*` 可能逐出版本號，逐出後版本號從 1 重來，最久 TTL 秒內可能讀到逐出前的舊內容。
 - **連線池**：預設 `DB_CONN_MAX_AGE=60`（開發設定固定為 0）。若平台提供 PgBouncer，需用 session 模式或直連：bootstrap 的 advisory lock 是 session 層級，而且連線字串帶的 `options`（search_path）在 transaction 模式會被拒絕。
 
 ## 6. 檢查清單（上線前後）
@@ -177,7 +181,7 @@ curl -s -o /dev/null -w "%{http_code}\n" https://<網域>/healthz            # 4
 5. **排程 `axes_reset_logs`。** django-axes 每次登入都留一筆 AccessLog，資料表只會長大：定期執行 `python manage.py axes_reset_logs --age-days 90`（天數自訂）。
 6. **Django `/admin/` 不經 Next。** Next 只代理 `/api/*`，對外網域上的 `/admin/` 是 Next 的 404；admin 在 api 服務上。要用就走內網／port-forward 連 api，並把那個主機名稱加進 `DJANGO_ALLOWED_HOSTS`（必要時 `CSRF_TRUSTED_ORIGINS`），限制來源 IP。大多數管理工作用 `manage.py` 就夠了（`exec api python manage.py …`）。
 7. **備份。** 資料在 PostgreSQL 與 media volume（`/app/media`）；compose 的 `db_data` volume 不是備份。PostgreSQL 用 `pg_dump`（或託管資料庫的時間點還原），例如 `docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > qm_center-$(date +%Y%m%d-%H%M).sql`。目前開發機的備份放在隨身碟 `D:\qip-backup\<yyyymmdd-hhmm>\`（`pg_dump` 輸出、`local-data/` 的真實 Excel 等）；那是開發資料的備份，**不是**雲端的備份方案。平台上要排程自動備份、異地保存，並演練過還原。
-8. **其他。** gunicorn worker 數（`GUNICORN_WORKERS`）依 CPU 與記憶體調整；Redis 沒有連線逾時，Redis 卡住時變更密碼的猜測計數會等（P8 處理）；平台若覆寫 `HOSTNAME`（例如 Kubernetes 會把它設成 Pod 名稱），Next 會只聽那個位址：在 web 的環境設 `HOSTNAME=0.0.0.0`；映像掃描與依賴更新（`npm audit` 目前有已知漏洞的依賴，未處理；Python 相依在 `requirements.txt` 沒有鎖版本，每次 build 取當下最新）；日誌收集與告警。
+8. **其他。** gunicorn worker 數（`GUNICORN_WORKERS`）依 CPU 與記憶體調整；Redis 的連線與回覆逾時是 `REDIS_SOCKET_TIMEOUT`（預設 2 秒，P8）：Redis 卡住時用到 cache 的請求最多多等這麼久，然後照常處理；平台若覆寫 `HOSTNAME`（例如 Kubernetes 會把它設成 Pod 名稱），Next 會只聽那個位址：在 web 的環境設 `HOSTNAME=0.0.0.0`；映像掃描與依賴更新（`npm audit` 目前有已知漏洞的依賴，未處理；Python 相依在 `requirements.txt` 沒有鎖版本，每次 build 取當下最新）；日誌收集與告警。
 
 ## 8. 疑難排解
 
