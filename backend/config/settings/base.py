@@ -2,6 +2,7 @@
 Django base settings for QIP Dashboard.
 品管中心 QIP 監測指標系統 — 共用設定
 """
+import math
 import os
 from datetime import timedelta
 from pathlib import Path
@@ -179,6 +180,77 @@ def dashboard_cache_settings(env, redis_url):
     return enabled, ttl
 
 
+LDAP_ROLES = ("viewer", "reporter")  # the roles an account created from AD may get (never reviewer / admin)
+
+
+def ldap_settings(env):
+    """Return the AD / LDAP sign-in settings (``settings.LDAP``) built from the environment.
+
+    LDAP_ENABLED=false (the default) switches AD off: nothing else is checked and sign-in behaves exactly as it did
+    before AD existed. With LDAP_ENABLED=true the server, bind account, bind password and search base are required;
+    a missing one stops startup. The messages name the keys only, never their values (the bind password is a secret).
+
+    LDAP_BIND_PASS is read straight from os.environ: django-environ treats a value that starts with "$" as a reference
+    to another variable and would silently replace a password such as "$abc" by something else.
+    LDAP_LOCAL_ONLY_ACCOUNTS lists the accounts that never go to AD and only compare the local password; it is empty by
+    default, i.e. every account (administrators included) must pass AD. It is case-folded, as are the lookups
+    against it.
+    """
+    enabled = env.bool("LDAP_ENABLED", default=False)
+    conf = {
+        "ENABLED": enabled,
+        "SERVER_IP": env.str("LDAP_SERVER_IP", default="").strip(),
+        "PORT": 389,
+        "BIND_USER": env.str("LDAP_BIND_USER", default="").strip(),
+        "BIND_PASS": os.environ.get("LDAP_BIND_PASS", ""),
+        "BASE_DN": env.str("LDAP_BASE_DN", default="").strip(),
+        "TIMEOUT": 3.0,
+        "AUTO_CREATE": env.bool("LDAP_AUTO_CREATE", default=False),
+        "DEFAULT_ROLE": env.str("LDAP_DEFAULT_ROLE", default="").strip() or "viewer",
+        "LOCAL_ONLY_ACCOUNTS": frozenset(
+            name.strip().casefold() for name in env.list("LDAP_LOCAL_ONLY_ACCOUNTS", default=[]) if name.strip()
+        ),
+    }
+    # A blank value is the same as an unset one. An unparsable number only matters while AD is on, and the message
+    # must not echo it.
+    port = env.str("LDAP_PORT", default="").strip()
+    if port:
+        try:
+            conf["PORT"] = int(port)
+        except ValueError:
+            if enabled:
+                raise ImproperlyConfigured("LDAP_PORT must be an integer between 1 and 65535") from None
+    timeout = env.str("LDAP_TIMEOUT", default="").strip()
+    if timeout:
+        try:
+            conf["TIMEOUT"] = float(timeout)
+        except ValueError:
+            if enabled:
+                raise ImproperlyConfigured("LDAP_TIMEOUT must be a number greater than 0 (seconds)") from None
+    if not enabled:
+        return conf
+
+    missing = [
+        key for key, name in (
+            ("LDAP_SERVER_IP", "SERVER_IP"),
+            ("LDAP_BIND_USER", "BIND_USER"),
+            ("LDAP_BIND_PASS", "BIND_PASS"),
+            ("LDAP_BASE_DN", "BASE_DN"),
+        )
+        if not conf[name]
+    ]
+    if missing:
+        raise ImproperlyConfigured("LDAP_ENABLED is true but these settings are empty: " + ", ".join(missing))
+    if not 1 <= conf["PORT"] <= 65535:
+        raise ImproperlyConfigured("LDAP_PORT must be an integer between 1 and 65535")
+    if not (math.isfinite(conf["TIMEOUT"]) and conf["TIMEOUT"] > 0):
+        # 0 would make the socket non-blocking, so every call would fail at once
+        raise ImproperlyConfigured("LDAP_TIMEOUT must be a number greater than 0 (seconds)")
+    if conf["DEFAULT_ROLE"] not in LDAP_ROLES:
+        raise ImproperlyConfigured("LDAP_DEFAULT_ROLE must be one of: " + ", ".join(LDAP_ROLES))
+    return conf
+
+
 # Cache — holds the change-password attempt counters (apps/accounts/password_throttle.py) and the dashboard
 # payloads (apps/indicators/cache.py).
 REDIS_URL = env("REDIS_URL", default="")
@@ -241,6 +313,9 @@ CSRF_FAILURE_VIEW = "apps.accounts.views.csrf_failure"
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 
 # ── Login protection and password policy ────────────────────────────
+
+# AD / LDAP sign-in (apps/accounts/ldap.py). Off unless LDAP_ENABLED=true; see ldap_settings().
+LDAP = ldap_settings(env)
 
 AUTHENTICATION_BACKENDS = [
     # Must be first: it refuses a locked-out login before any real backend checks the password.

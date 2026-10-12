@@ -99,11 +99,14 @@ def axes_username(request: HttpRequest, credentials: Mapping | None = None) -> s
     The ``credentials`` axes passes in come first, because they hold exactly what
     ``authenticate()`` saw: ``employee_id`` for the API login, ``username`` for the
     Django admin form. Only without them does it read the request itself.
+
+    The name is case-folded: AD matches ``sAMAccountName`` case-insensitively, so ``a123`` and ``A123`` are the
+    same person to AD and must share one failure counter, or typing the other case would double the guesses.
     """
     for key in _USERNAME_KEYS:
         name = _as_username((credentials or {}).get(key))
         if name:
-            return name
+            return name.casefold()
     # Fallback for callers that hand axes no credentials. No flow in this project does today:
     # authenticate(), the login signals and AxesMiddleware (via request.axes_credentials) all pass
     # them. It is here for axes_dispatch / AxesProxyHandler.is_allowed(request) should anyone use them.
@@ -111,7 +114,7 @@ def axes_username(request: HttpRequest, credentials: Mapping | None = None) -> s
         for key in _USERNAME_KEYS:
             name = _as_username(payload.get(key))
             if name:
-                return name
+                return name.casefold()
     return None
 
 
@@ -134,4 +137,5 @@ def unlock_account(employee_id: str) -> int:
     if not employee_id:
         # reset_attempts() without a filter would wipe the records of every account.
         return 0
-    return AxesProxyHandler.reset_attempts(username=employee_id)
+    # Failures are recorded under the case-folded name (axes_username), so look them up the same way.
+    return AxesProxyHandler.reset_attempts(username=employee_id.casefold())

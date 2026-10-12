@@ -11,3 +11,4 @@ numpy>=1.26
 python-Levenshtein>=0.25
 gunicorn>=22.0
 whitenoise>=6.6
+ldap3>=2.9.1,<3

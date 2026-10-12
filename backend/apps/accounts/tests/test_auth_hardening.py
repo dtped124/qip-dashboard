@@ -300,6 +300,34 @@ def test_login_can_not_be_probed_with_a_malformed_body(client_for):
     assert not AccessAttempt.objects.exists()
 
 
+def test_both_spellings_of_an_account_name_share_one_failure_counter(make_user, client_for):
+    """AD matches account names case-insensitively, so a123 and A123 are one person: 3 + 2 failures lock."""
+    make_user("A123", ["viewer"], password=GOOD_PASSWORD)
+    client = client_for()
+
+    for _ in range(3):
+        assert login(client, "a123", "wrong-password").status_code == 400
+    assert login(client, "A123", "wrong-password").status_code == 400
+    fifth = login(client, "A123", "wrong-password")
+
+    assert fifth.status_code == 429
+    assert body(fifth) == LOCKED_BODY
+    attempt = AccessAttempt.objects.get()  # one record, not one per spelling
+    assert (attempt.username, attempt.failures_since_start) == ("a123", 5)
+
+
+def test_a_successful_login_clears_the_failures_counted_under_the_other_spelling(make_user, client_for):
+    make_user("A123", ["viewer"], password=GOOD_PASSWORD)
+    client = client_for()
+    for _ in range(4):
+        assert login(client, "a123", "wrong-password").status_code == 400
+    assert AccessAttempt.objects.get().failures_since_start == 4
+
+    assert login(client, "A123", GOOD_PASSWORD).status_code == 200
+
+    assert not AccessAttempt.objects.exists()
+
+
 # ── axes_username ────────────────────────────────────────────────
 
 
@@ -315,9 +343,11 @@ class _DrfLikeRequest:
     [
         ({"employee_id": "a123", "password": "x"}, "a123"),  # API login
         ({"username": "a123", "password": "x"}, "a123"),  # Django admin form
+        ({"username": "A123", "password": "x"}, "a123"),
         ({"employee_id": "api", "username": "form"}, "api"),  # employee_id first
         ({"employee_id": None, "username": "form"}, "form"),
         ({"employee_id": "  padded  "}, "padded"),
+        ({"employee_id": "A123"}, "a123"),  # AD does not tell A123 from a123, so neither does the counter
         ({"employee_id": 12345}, "12345"),  # DRF's CharField accepts numbers
         ({"employee_id": True}, None),
         ({"employee_id": ["a"]}, None),
@@ -340,6 +370,13 @@ def test_axes_username_reads_a_json_body(rf):
     request = rf.post("/x", data=json.dumps({"employee_id": " from-body "}), content_type="application/json")
     assert axes_username(request) == "from-body"
     assert axes_username(request, {}) == "from-body"
+
+
+def test_axes_username_case_folds_names_read_from_the_request_too(rf):
+    assert axes_username(rf.post("/x", {"username": "From-Form"})) == "from-form"
+    from_body = rf.post("/x", data='{"employee_id": "From-Body"}', content_type="application/json")
+    assert axes_username(from_body) == "from-body"
+    assert axes_username(_DrfLikeRequest({"employee_id": "From-Data"})) == "from-data"
 
 
 def test_axes_username_reads_a_form_post(rf):
@@ -393,10 +430,43 @@ def test_unlock_account_without_a_name_leaves_every_record_alone(empty, member, 
     assert AccessAttempt.objects.filter(username=member.employee_id).count() == 1
 
 
+def test_unlock_account_finds_failures_recorded_under_the_folded_name(make_user, client_for):
+    make_user("A123", ["viewer"], password=GOOD_PASSWORD)
+    client = client_for()
+    for _ in range(5):
+        login(client, "A123", "wrong-password")
+    assert login(client, "A123", GOOD_PASSWORD).status_code == 429
+
+    assert unlock_account("A123") == 1  # the record is stored as "a123"
+
+    assert not AccessAttempt.objects.exists()
+    assert login(client, "A123", GOOD_PASSWORD).status_code == 200
+
+
+def test_an_admin_password_reset_unlocks_an_account_with_capitals(make_user, client_for, admin_account):
+    target = make_user("A123", ["viewer"], password=GOOD_PASSWORD)
+    client = client_for()
+    for _ in range(5):
+        login(client, "A123", "wrong-password")
+    assert login(client, "A123", GOOD_PASSWORD).status_code == 429
+
+    temporary = reset_password(client_for(admin_account), target).json()["temporary_password"]
+
+    assert not AccessAttempt.objects.exists()
+    assert login(client_for(), "A123", temporary).status_code == 200
+
+
 def test_unlock_account_hands_the_name_to_axes(monkeypatch):
     calls = []
     monkeypatch.setattr(lockout.AxesProxyHandler, "reset_attempts", lambda **kwargs: calls.append(kwargs) or 7)
     assert unlock_account("t_someone") == 7
+    assert calls == [{"username": "t_someone"}]
+
+
+def test_unlock_account_hands_axes_the_folded_name(monkeypatch):
+    calls = []
+    monkeypatch.setattr(lockout.AxesProxyHandler, "reset_attempts", lambda **kwargs: calls.append(kwargs) or 1)
+    unlock_account("T_Someone")
     assert calls == [{"username": "t_someone"}]
 
 

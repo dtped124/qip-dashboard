@@ -21,3 +21,41 @@ def local_memory_cache(settings):
     cache.clear()
     yield
     cache.clear()
+
+
+class _NoRealLdapConnection:
+    """Stands in for ldap3.Connection: a test that gets this far meant to talk to a real AD."""
+
+    def __init__(self, *args, **kwargs):
+        raise AssertionError("real LDAP connection attempted in tests")
+
+
+@pytest.fixture(autouse=True)
+def ldap_off(settings, monkeypatch):
+    """AD sign-in is off in every test, and no test can open a real LDAP connection.
+
+    settings.LDAP is replaced by a disabled configuration whatever the environment or backend/.env says (a developer
+    may have LDAP_* in it to try the real AD by hand). ldap3.Connection - and the name apps.accounts.ldap bound to it
+    at import - is replaced by a stub that raises, so a test that forgets to fake the AD fails instead of reaching the
+    hospital network. Tests of AD behaviour switch their own configuration on and fake Server / Connection themselves.
+    """
+    import ldap3
+
+    settings.LDAP = {
+        "ENABLED": False,
+        "SERVER_IP": "",
+        "PORT": 389,
+        "BIND_USER": "",
+        "BIND_PASS": "",
+        "BASE_DN": "",
+        "TIMEOUT": 3.0,
+        "AUTO_CREATE": False,
+        "DEFAULT_ROLE": "viewer",
+        "LOCAL_ONLY_ACCOUNTS": frozenset(),
+    }
+    monkeypatch.setattr(ldap3, "Connection", _NoRealLdapConnection)
+    try:
+        from apps.accounts import ldap as accounts_ldap
+    except ImportError:  # the client module does not exist yet / is being imported broken: nothing more to guard
+        return
+    monkeypatch.setattr(accounts_ldap, "Connection", _NoRealLdapConnection)

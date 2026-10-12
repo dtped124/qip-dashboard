@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import importlib
 import io
+import os
 import re
+import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -32,7 +34,7 @@ from apps.core.management.commands import bootstrap
 from apps.entry.models import Campus
 from apps.indicators.constants import INDICATOR_META
 from apps.indicators.models import Indicator
-from config.settings.base import database_config
+from config.settings.base import database_config, ldap_settings
 
 pytestmark = pytest.mark.django_db
 
@@ -542,6 +544,226 @@ class TestProductionSecretKey:
 
     def test_a_real_key_still_works_with_the_flag_set(self, load_prod):
         assert load_prod(COLLECTSTATIC_ONLY="1", **HOSTS).SECRET_KEY == VALID_SECRET_KEY
+
+
+# ── AD / LDAP settings ───────────────────────────────────────────
+
+LDAP_KEYS = (
+    "LDAP_ENABLED", "LDAP_SERVER_IP", "LDAP_PORT", "LDAP_BIND_USER", "LDAP_BIND_PASS", "LDAP_BASE_DN", "LDAP_TIMEOUT",
+    "LDAP_AUTO_CREATE", "LDAP_DEFAULT_ROLE", "LDAP_LOCAL_ONLY_ACCOUNTS",
+)
+# Made-up values; none of them may ever be echoed by an error message.
+LDAP_VALUES = {
+    "LDAP_ENABLED": "true",
+    "LDAP_SERVER_IP": "ad.example.test",
+    "LDAP_BIND_USER": "CN=svc-test,DC=example,DC=test",
+    "LDAP_BIND_PASS": "Pw-Zq9-marker",
+    "LDAP_BASE_DN": "DC=example,DC=test",
+}
+LDAP_REQUIRED = ("LDAP_SERVER_IP", "LDAP_BIND_USER", "LDAP_BIND_PASS", "LDAP_BASE_DN")
+
+
+@pytest.fixture
+def clean_ldap_env(monkeypatch):
+    for key in LDAP_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
+
+def enabled_env(monkeypatch, **overrides):
+    for key, value in {**LDAP_VALUES, **overrides}.items():
+        monkeypatch.setenv(key, value)
+
+
+class TestLdapSettings:
+    def test_off_without_any_key_is_fine_and_has_the_documented_defaults(self, clean_ldap_env):
+        conf = ldap_settings(environ.Env())
+
+        assert conf == {
+            "ENABLED": False,
+            "SERVER_IP": "",
+            "PORT": 389,
+            "BIND_USER": "",
+            "BIND_PASS": "",
+            "BASE_DN": "",
+            "TIMEOUT": 3.0,
+            "AUTO_CREATE": False,
+            "DEFAULT_ROLE": "viewer",
+            "LOCAL_ONLY_ACCOUNTS": frozenset(),
+        }
+        assert isinstance(conf["LOCAL_ONLY_ACCOUNTS"], frozenset)
+
+    def test_the_module_level_setting_exists_and_has_the_same_keys(self, clean_ldap_env):
+        import config.settings.base as base
+
+        assert set(base.LDAP) == set(ldap_settings(environ.Env()))
+
+    def test_off_validates_nothing(self, monkeypatch, clean_ldap_env):
+        monkeypatch.setenv("LDAP_ENABLED", "false")
+        monkeypatch.setenv("LDAP_PORT", "not-a-port")
+        monkeypatch.setenv("LDAP_TIMEOUT", "soon")
+        monkeypatch.setenv("LDAP_DEFAULT_ROLE", "admin")
+
+        conf = ldap_settings(environ.Env())
+
+        assert conf["ENABLED"] is False
+        assert (conf["PORT"], conf["TIMEOUT"]) == (389, 3.0)  # unparsable: the defaults
+        assert conf["DEFAULT_ROLE"] == "admin"  # not checked while AD is off
+
+    def test_off_does_not_range_check_either(self, monkeypatch, clean_ldap_env):
+        monkeypatch.setenv("LDAP_PORT", "0")
+        monkeypatch.setenv("LDAP_TIMEOUT", "-4")
+
+        conf = ldap_settings(environ.Env())
+
+        assert (conf["ENABLED"], conf["PORT"], conf["TIMEOUT"]) == (False, 0, -4.0)
+
+    def test_on_with_every_key_uses_the_values(self, monkeypatch, clean_ldap_env):
+        enabled_env(
+            monkeypatch, LDAP_PORT="3890", LDAP_TIMEOUT="1.5", LDAP_AUTO_CREATE="true", LDAP_DEFAULT_ROLE="reporter",
+        )
+
+        conf = ldap_settings(environ.Env())
+
+        assert conf["ENABLED"] is True
+        assert (conf["SERVER_IP"], conf["BIND_USER"], conf["BASE_DN"]) == (
+            "ad.example.test", "CN=svc-test,DC=example,DC=test", "DC=example,DC=test",
+        )
+        assert conf["BIND_PASS"] == "Pw-Zq9-marker"
+        assert (conf["PORT"], conf["TIMEOUT"]) == (3890, 1.5)
+        assert (conf["AUTO_CREATE"], conf["DEFAULT_ROLE"]) == (True, "reporter")
+
+    @pytest.mark.parametrize("missing", LDAP_REQUIRED)
+    def test_on_without_a_required_key_stops_startup_naming_only_that_key(self, monkeypatch, clean_ldap_env, missing):
+        enabled_env(monkeypatch)
+        monkeypatch.delenv(missing)
+
+        with pytest.raises(ImproperlyConfigured) as excinfo:
+            ldap_settings(environ.Env())
+
+        message = str(excinfo.value)
+        assert missing in message
+        assert all(key not in message for key in LDAP_REQUIRED if key != missing)
+        assert all(value not in message for key, value in LDAP_VALUES.items() if key != "LDAP_ENABLED")
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_a_blank_required_key_counts_as_missing(self, monkeypatch, clean_ldap_env, blank):
+        enabled_env(monkeypatch, LDAP_BASE_DN=blank)
+        with pytest.raises(ImproperlyConfigured, match="LDAP_BASE_DN"):
+            ldap_settings(environ.Env())
+
+    def test_every_missing_key_is_listed_at_once(self, monkeypatch, clean_ldap_env):
+        monkeypatch.setenv("LDAP_ENABLED", "true")
+
+        with pytest.raises(ImproperlyConfigured) as excinfo:
+            ldap_settings(environ.Env())
+
+        assert all(key in str(excinfo.value) for key in LDAP_REQUIRED)
+
+    @pytest.mark.parametrize("port", ["0", "65536", "-1", "abc", "38.9"])
+    def test_a_bad_port_is_refused_without_echoing_it(self, monkeypatch, clean_ldap_env, port):
+        enabled_env(monkeypatch, LDAP_PORT=port)
+
+        with pytest.raises(ImproperlyConfigured, match="LDAP_PORT") as excinfo:
+            ldap_settings(environ.Env())
+
+        assert str(excinfo.value) == "LDAP_PORT must be an integer between 1 and 65535"
+
+    def test_blank_port_timeout_and_role_are_the_same_as_unset(self, monkeypatch, clean_ldap_env):
+        enabled_env(monkeypatch, LDAP_PORT=" ", LDAP_TIMEOUT="", LDAP_DEFAULT_ROLE="")
+
+        conf = ldap_settings(environ.Env())
+
+        assert (conf["PORT"], conf["TIMEOUT"], conf["DEFAULT_ROLE"]) == (389, 3.0, "viewer")
+
+    @pytest.mark.parametrize("port", ["1", "389", "636", "65535"])
+    def test_ports_inside_the_range_pass(self, monkeypatch, clean_ldap_env, port):
+        enabled_env(monkeypatch, LDAP_PORT=port)
+        assert ldap_settings(environ.Env())["PORT"] == int(port)
+
+    @pytest.mark.parametrize("timeout", ["0", "-1", "-0.5", "abc", "nan", "inf"])
+    def test_a_bad_timeout_is_refused(self, monkeypatch, clean_ldap_env, timeout):
+        enabled_env(monkeypatch, LDAP_TIMEOUT=timeout)
+        with pytest.raises(ImproperlyConfigured, match="LDAP_TIMEOUT"):
+            ldap_settings(environ.Env())
+
+    def test_a_small_positive_timeout_passes(self, monkeypatch, clean_ldap_env):
+        enabled_env(monkeypatch, LDAP_TIMEOUT="0.25")
+        assert ldap_settings(environ.Env())["TIMEOUT"] == 0.25
+
+    @pytest.mark.parametrize("role", ["admin", "reviewer", "root", "Viewer"])
+    def test_only_viewer_and_reporter_may_be_the_default_role(self, monkeypatch, clean_ldap_env, role):
+        enabled_env(monkeypatch, LDAP_DEFAULT_ROLE=role)
+        with pytest.raises(ImproperlyConfigured, match="LDAP_DEFAULT_ROLE"):
+            ldap_settings(environ.Env())
+
+    @pytest.mark.parametrize("role", ["viewer", "reporter"])
+    def test_the_allowed_default_roles_pass(self, monkeypatch, clean_ldap_env, role):
+        enabled_env(monkeypatch, LDAP_DEFAULT_ROLE=role)
+        assert ldap_settings(environ.Env())["DEFAULT_ROLE"] == role
+
+    @pytest.mark.parametrize("password", ["$abc", "$", "$$x", "${HOME}", "a$b", " lead and trail "])
+    def test_the_bind_password_is_kept_exactly_as_written(self, monkeypatch, clean_ldap_env, password):
+        """django-environ would read a value starting with $ as a reference to another variable."""
+        enabled_env(monkeypatch, LDAP_BIND_PASS=password)
+        assert ldap_settings(environ.Env())["BIND_PASS"] == password
+
+    def test_the_local_only_list_is_case_folded_and_trimmed(self, monkeypatch, clean_ldap_env):
+        monkeypatch.setenv("LDAP_LOCAL_ONLY_ACCOUNTS", " Admin , ROOT ,, a1 ,  ")
+
+        conf = ldap_settings(environ.Env())
+
+        assert conf["LOCAL_ONLY_ACCOUNTS"] == frozenset({"admin", "root", "a1"})
+        assert isinstance(conf["LOCAL_ONLY_ACCOUNTS"], frozenset)
+
+    @pytest.mark.parametrize("value", ["", " ", ",", " , ,  "])
+    def test_empty_entries_in_the_local_only_list_are_ignored(self, monkeypatch, clean_ldap_env, value):
+        monkeypatch.setenv("LDAP_LOCAL_ONLY_ACCOUNTS", value)
+        assert ldap_settings(environ.Env())["LOCAL_ONLY_ACCOUNTS"] == frozenset()
+
+    def test_the_local_only_list_is_read_while_ad_is_off_too(self, monkeypatch, clean_ldap_env):
+        monkeypatch.setenv("LDAP_LOCAL_ONLY_ACCOUNTS", "Admin")
+        assert ldap_settings(environ.Env())["LOCAL_ONLY_ACCOUNTS"] == frozenset({"admin"})
+
+
+def _prod_startup(extra_env):
+    """Start production settings in a fresh interpreter (as the image build and gunicorn do); return the process.
+
+    Every LDAP_* variable of this process is dropped first, so a developer's own settings cannot leak in.
+    """
+    backend_dir = Path(settings.BASE_DIR)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("LDAP_")}
+    env.update({
+        "DJANGO_SETTINGS_MODULE": "config.settings.prod",
+        "DJANGO_SECRET_KEY": VALID_SECRET_KEY,
+        **HOSTS,
+        **extra_env,
+    })
+    return subprocess.run(
+        [sys.executable, "-c", "import django; django.setup()"],
+        cwd=backend_dir, env=env, capture_output=True, text=True, timeout=120,
+    )
+
+
+class TestLdapStartup:
+    def test_the_image_build_environment_loads_production_settings_without_any_ldap_key(self):
+        """The Dockerfile's collectstatic step has no LDAP_* variables; AD being off must not stop it."""
+        result = _prod_startup({"COLLECTSTATIC_ONLY": "1"})
+        assert result.returncode == 0, result.stderr
+
+    def test_ad_on_with_a_missing_key_refuses_to_start_and_prints_no_value(self):
+        given = {**LDAP_VALUES, "LDAP_SERVER_IP": ""}  # the server is the missing one
+
+        result = _prod_startup(given)
+
+        assert result.returncode != 0
+        assert "ImproperlyConfigured" in result.stderr
+        assert "LDAP_SERVER_IP" in result.stderr
+        for key in ("LDAP_BIND_USER", "LDAP_BIND_PASS", "LDAP_BASE_DN"):
+            assert LDAP_VALUES[key] not in result.stderr, f"the value of {key} leaked into the error output"
+
+    def test_ad_on_with_every_key_starts(self):
+        result = _prod_startup(LDAP_VALUES)
+        assert result.returncode == 0, result.stderr
 
 
 class TestImageContents:
