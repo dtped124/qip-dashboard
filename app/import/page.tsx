@@ -5,34 +5,7 @@ import { Upload, Clock, FileSpreadsheet, AlertCircle, ChevronDown, ChevronUp } f
 import { ImportWizard } from '@/components/import/ImportWizard';
 import type { ImportLog } from '@/lib/types';
 import { correctDatapoint, getImportLogs } from '@/lib/api';
-
-interface WarningInfo {
-  indicatorCode: string;
-  campus: string;
-  year: number;
-  month: number;
-  computedValue: number;
-  cellValue: number;
-  numerator: number;
-  denominator: number;
-}
-
-function parseWarning(errorText: string): WarningInfo | null {
-  const m = errorText.match(
-    /^\[警告\] (\S+) (\S+) (\d+)年(\d+)月: n\/d 計算值 ([\d.]+) 與儲存格顯示值 ([\d.]+) 差異 [\d.]+ 倍 \(n=(\d+), d=(\d+)\)/
-  );
-  if (!m) return null;
-  return {
-    indicatorCode: m[1],
-    campus: m[2],
-    year: parseInt(m[3]),
-    month: parseInt(m[4]),
-    computedValue: parseFloat(m[5]),
-    cellValue: parseFloat(m[6]),
-    numerator: parseInt(m[7]),
-    denominator: parseInt(m[8]),
-  };
-}
+import { parseWarning, type WarningInfo } from '@/lib/import/parseWarning';
 
 async function postCorrection(
   logId: number,
