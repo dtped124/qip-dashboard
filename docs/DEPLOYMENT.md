@@ -125,16 +125,16 @@ docker builder prune -f --filter until=24h        # 清掉超過一天沒用到�
 | `WEB_PORT`、`WEB_BIND` | 否 | 只給 `docker-compose.prod.yml`：web 發佈的埠（預設 3000）與綁定的位址（預設 `0.0.0.0`；本機試跑用 `127.0.0.1`） |
 | `LDAP_ENABLED` | 否（預設 false） | AD 驗證總開關。預設關閉時行為與沒有 AD 完全相同。由資訊室上線時改成 `true`；**改之前品管中心要先建好自己的 AD 員編管理者帳號**，見 [§4.1](#41-啟用-ad-登入的順序) |
 | `LDAP_SERVER_IP` | 是（啟用時） | AD 伺服器位址（主機名稱或 IP），資訊室提供；api 容器必須連得到 |
-| `LDAP_PORT` | 否（預設 389） | AD 埠，1–65535。走 389 明文 bind（與醫中系統相同），不做 LDAPS |
+| `LDAP_PORT` | 否（預設 389） | AD 埠，1–65535。**只能填明文 LDAP 埠；不要填 636（LDAPS），本系統不做 TLS**（走 389 明文 bind，與醫中系統相同） |
 | `LDAP_BIND_USER` | 是（啟用時） | 查詢用服務帳號，資訊室提供；只用來搜尋員編對應的 DN |
-| `LDAP_BIND_PASS` | 是（啟用時） | 上述服務帳號的密碼；不入庫，不要含 `#`、`$`、空白與引號 |
-| `LDAP_BASE_DN` | 是（啟用時） | 搜尋人員的起點 DN，資訊室提供；不要含 `#`、`$` 與引號 |
+| `LDAP_BIND_PASS` | 是（啟用時） | 上述服務帳號的密碼；不入庫。值含 `$` 時，在 `.env.prod` 用單引號整個包起來（`LDAP_BIND_PASS='…'`），否則 Compose 會把 `$xxx` 換成空字串；值裡不要有「空白＋`#`」 |
+| `LDAP_BASE_DN` | 是（啟用時） | 搜尋人員的起點 DN，資訊室提供。DN 可含空白，照資訊室給的原樣填；值含 `$` 時同樣用單引號整個包起來；值裡不要有「空白＋`#`」 |
 | `LDAP_TIMEOUT` | 否（預設 3） | 連線與等待回覆的逾時秒數（> 0，可帶小數）。AD 完全連不上時一次登入最壞約等 5 倍這個秒數，之後 30 秒內的登入直接回「無法連線到院內 AD」 |
 | `LDAP_AUTO_CREATE` | 否（預設 false） | AD 驗證成功但系統沒有此帳號時是否自動建立。預設 false：回「尚未開通」，由品管中心開通帳號 |
 | `LDAP_DEFAULT_ROLE` | 否（預設 viewer） | 自動建立帳號時給的角色，只接受 `viewer` 或 `reporter` |
-| `LDAP_LOCAL_ONLY_ACCOUNTS` | 否（預設空） | 不走 AD、只比對本地密碼的員工編號，逗號分隔、不分大小寫（例如 `admin`）。**留空 = 純 AD，連 `admin` 都登不進去**；要保留不依賴 AD 的緊急管理者就填 `admin` |
+| `LDAP_LOCAL_ONLY_ACCOUNTS` | 否（預設空） | 不走 AD、只比對本地密碼的員工編號，逗號分隔（例如 `admin`）。清單比對不分大小寫，但登入時帳號要與系統內寫法完全相同（`admin` 不能打成 `ADMIN`）。**留空 = 純 AD，連 `admin` 都登不進去**；要保留不依賴 AD 的緊急管理者就填 `admin` |
 
-`LDAP_ENABLED=true` 時，`LDAP_SERVER_IP`、`LDAP_BIND_USER`、`LDAP_BIND_PASS`、`LDAP_BASE_DN` 缺任何一個，api 容器都拒絕啟動，錯誤訊息只列鍵名、不印值。`LDAP_ENABLED` 沒設或為 false 時，這組變數全部不讀。
+`LDAP_ENABLED=true` 時，`LDAP_SERVER_IP`、`LDAP_BIND_USER`、`LDAP_BIND_PASS`、`LDAP_BASE_DN` 缺任何一個，api 容器都拒絕啟動，錯誤訊息只列鍵名、不印值。`LDAP_ENABLED` 沒設或為 false 時，這組變數全部不檢查。
 
 ## 4. 首次啟動順序
 
@@ -171,22 +171,34 @@ AD 登入**預設關閉**。關閉時系統行為與今天完全相同；由資�
 
 1. **【品管中心】在 LDAP 仍關閉時，先建好自己的 AD 員編管理者帳號——這是資訊室啟用前的必要條件。** 用 `admin` 登入 `/entry/admin` →「+ 新增使用者」，帳號填你自己的**員工編號**（必須與 AD 的 `sAMAccountName` 一致）、姓名、角色勾「管理員」。其他需要登入的同仁（審核者、填報者、檢視者）也趁此時盤點、建好。沒做這一步就啟用，系統會沒有任何管理者能登入。
 2. **【品管中心決定】決定 `LDAP_LOCAL_ONLY_ACCOUNTS`。** 留空 = 純 AD：所有帳號都必須通過 AD，`admin` 從此登不進去；AD 當機時也沒有人能登入。要保留一個不依賴 AD 的緊急管理者，就填 `admin`（此時 `admin` 永不打 AD、只比本地密碼，AD 當機時它仍能登入；請保管好它的密碼）。
-3. **【資訊室】填 LDAP 四個必填鍵，並把 `LDAP_ENABLED` 改成 `true`。** 正式環境寫在 `.env.prod`，開發環境寫在 `backend/.env`（兩者都不入庫）：`LDAP_SERVER_IP`、`LDAP_BIND_USER`、`LDAP_BIND_PASS`、`LDAP_BASE_DN`，埠不是 389 才設 `LDAP_PORT`。DN 與密碼不要含 `#`、`$`、空白與引號。缺任何一個，容器拒絕啟動並只印鍵名。
-4. **【資訊室】重啟 api，看啟動 log 的狀態行。** 改 `.env.prod` 後要**重建容器**才會讀到新值（`restart` 不會重新讀 `env_file`）：`docker compose -f docker-compose.prod.yml --env-file .env.prod up -d api`。log 要看到 `[bootstrap] AD 驗證：啟用（…）`，括號裡的主機、埠與本地帳號清單要和你填的一致。看到「未啟用」代表沒生效，見 §8。
+3. **【資訊室】填 LDAP 四個必填鍵，並把 `LDAP_ENABLED` 改成 `true`。** 正式環境寫在 `.env.prod`，開發環境寫在 `backend/.env`（兩者都不入庫）：`LDAP_SERVER_IP`、`LDAP_BIND_USER`、`LDAP_BIND_PASS`、`LDAP_BASE_DN`，埠不是 389 才設 `LDAP_PORT`（只能填明文 LDAP 埠，不要填 636）。格式（已實測）：DN 可含空白，照資訊室給的原樣填；值含 `$` 時在 `.env.prod` 用單引號整個包起來（`LDAP_BIND_PASS='…'`），否則 Compose 會把 `$xxx` 換成空字串——密碼開頭是 `$` 又沒加引號 → 容器拒絕啟動；`$` 在中間 → bind 失敗、所有人看到 503；值裡不要有「空白＋`#`」。缺任何一個，容器拒絕啟動並只印鍵名。
+4. **【資訊室】先預檢，再重啟 api，看啟動 log 的狀態行。** 預檢：切換前用一次性容器、臨時打開 LDAP 跑 `--audit`，就能發現管理者不在 AD，不必先動到執行中的 api：
+
+   ```bash
+   docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm -e RUN_BOOTSTRAP=0 -e LDAP_ENABLED=true api python manage.py ldap_check --audit
+   ```
+
+   （`.env.prod` 的四個必填鍵要已填好；結果怎麼判讀見第 5 步。）預檢沒問題再重啟 api。 改 `.env.prod` 後要**重建容器**才會讀到新值（`restart` 不會重新讀 `env_file`）：`docker compose -f docker-compose.prod.yml --env-file .env.prod up -d api`。log 要看到 `[bootstrap] AD 驗證：啟用（…）`，括號裡的主機、埠與本地帳號清單要和你填的一致。看到「未啟用」代表沒生效，見 §8。**啟用後，啟用前以本地密碼登入的 session 會在下一個請求被自動登出，使用者需重新登入（走 AD）；本地帳號清單內的帳號與 AD 登入的 session 不受影響。**
 5. **【資訊室與品管中心】用 `ldap_check` 驗證。**
 
    ```bash
    # 正式（在 api 容器內執行；平台不是 compose 就用它的 shell）
-   docker compose -p qip-prod exec api python manage.py ldap_check                    # 服務帳號能不能 bind
-   docker compose -p qip-prod exec api python manage.py ldap_check --user <員編>      # 查某人：找到與否、姓名、mail、部門
-   docker compose -p qip-prod exec api python manage.py ldap_check --audit            # 所有啟用中的本地帳號是否都在 AD
-   docker compose -p qip-prod exec api python manage.py ldap_check --login            # 互動輸入密碼，測完整登入流程（不要加 -T）
-   # 開發（-T 不配置終端機；--login 要輸入密碼，改用 docker compose exec api … 不加 -T）
+   docker compose -f docker-compose.prod.yml --env-file .env.prod exec api python manage.py ldap_check                    # 服務帳號能不能 bind
+   docker compose -f docker-compose.prod.yml --env-file .env.prod exec api python manage.py ldap_check --user <員編>      # 查某人：找到與否、姓名、mail、部門
+   docker compose -f docker-compose.prod.yml --env-file .env.prod exec api python manage.py ldap_check --audit            # 所有啟用中的本地帳號是否都在 AD
+   docker compose -f docker-compose.prod.yml --env-file .env.prod exec api python manage.py ldap_check --user <員編> --login   # 互動輸入該員編的 AD 密碼，測完整登入流程（不要加 -T）
+   # 看 log
+   docker compose -f docker-compose.prod.yml --env-file .env.prod logs api
+   # 開發（-T 不配置終端機；--user <員編> --login 要輸入密碼，改用 docker compose exec api … 不加 -T）
    docker compose exec -T api python manage.py ldap_check
    ```
 
-   `--audit` 列出「系統裡啟用中、但 AD 查無」的帳號（啟用後它們將無法登入），**管理者特別標 `[ADMIN]`**，另列「AD 姓名與系統姓名不一致」者（只是提醒，不影響登入）。**所有管理者都必須不在查無清單裡**，有的話回到第 1 步修正員編，再重跑。示範帳號、測試帳號本來就不在 AD，出現在清單是正常的，用不到就停用或刪除。指令失敗時結束碼非 0；輸出不含密碼。
+   `--audit` 列出「系統裡啟用中、但 AD 查無」的帳號（啟用後它們將無法登入），**管理者特別標 `[ADMIN]`**，另列「AD 姓名與系統姓名不一致」者（只是提醒，不影響登入）。**判讀**：清單為空（`LDAP_LOCAL_ONLY_ACCOUNTS` 留空）時，seed 管理者 `admin` 一定會列出並標註「seed 管理者；要保留請列入 `LDAP_LOCAL_ONLY_ACCOUNTS`」，這是預期、不算警告。**除了 `admin` 以外，不得有任何 `[ADMIN]` 查無**：有的話結尾出現 WARNING、結束碼 2，回到第 1 步修正員編，再重跑。只有非管理者查無或姓名不一致時結束碼為 0（示範帳號、測試帳號本來就不在 AD，出現是正常的，用不到就停用或刪除）。其他指令失敗時結束碼非 0；輸出不含密碼。
+
+   **帳號被鎖住時解鎖**：`docker compose -f docker-compose.prod.yml --env-file .env.prod exec api python manage.py unlock_account <員編>`（不分大小寫，同時清掉改密碼嘗試計數；可一次列多個員編）。
 6. **【品管中心】用自己的 AD 帳號登入驗證，再確認 `admin` 是否如預期。** 用你的員編＋AD 密碼登入：應成功、落在儀表板、**不會被要求改密碼**。再用 `admin` 的本地密碼登入：第 2 步留空 → 應被擋（「帳號或密碼錯誤」）；填了 `admin` → 應能登入。逐項勾選見 `docs/ACCEPTANCE_GUIDE.md` 的「AD 登入」一節。
+
+**資訊室啟用前的建議**：在邊緣（反向代理）對 `/api/auth/login` 做**每 IP 限流**。登入頁可被拿來累計 AD 自己的鎖定次數；本系統的 axes 是每帳號 5 次／5 分鐘，只能限速，且經 Next 代理後看不到個別來源 IP，per-IP 限流只能在邊緣做。
 
 **退回**：把 `LDAP_ENABLED` 改成 `false`（或刪掉那一行）並重建 api，行為立刻回到純本地密碼。AD 使用者在第一次 AD 登入時，若原本是「須改密碼」狀態，其臨時密碼已被作廢，退回後需由管理員在帳號管理頁重設。
 
@@ -197,7 +209,8 @@ AD 登入**預設關閉**。關閉時系統行為與今天完全相同；由資�
 - 「尚未開通」與「AD 查無」的失敗都計入登入鎖定，連續 5 次後鎖 5 分鐘。
 - 從登入頁猜 AD 密碼，失敗也會累計到 **AD 自己**的鎖定原則；本系統的 5 次鎖定可以限速，但無法完全避免。用資訊室的測試帳號做錯密碼測試，不要用自己的。
 - 預設走 389 明文 bind（與醫中系統相同），不做 LDAPS；要加密需資訊室提供 CA 憑證，另案處理。
-- Django 後台的 `/admin/password_change/`（僅 `is_staff`）不受「AD 帳號不得在本系統改密碼」的限制；後台本來就不對外（§7-6）。
+- LDAP 開啟時，Django 後台的 `/admin/password_change/`（僅 `is_staff`）不受 AD 閘門限制（不受「AD 帳號不得在本系統改密碼」的限制）；後台本來就不對外（§7-6）。
+- Django 後台 `/admin/login/` 在 AD 連不上時會計入鎖定次數（API 登入不會）。
 - 帳號比對不分大小寫（`abc` 與 `ABC` 視為同一人），登入鎖定的計數也不分大小寫；但 `employee_id` 欄位本身仍分大小寫（既有行為）。
 - 關閉 LDAP 退回時，AD 使用者的本地密碼若曾被作廢（第一次 AD 登入時帳號還是「須改密碼」狀態者），需要管理者重設。
 

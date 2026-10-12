@@ -53,7 +53,7 @@
   - `LDAP_LOCAL_ONLY_ACCOUNTS` 內的帳號不打 AD，只比本地密碼；清單為空時，連 `admin` 以本地密碼登入也是 400。
 - AD 登入成功時，若帳號的 `must_change_password` 為 `true`，會自動清成 `false` 並作廢它的本地臨時密碼，所以 AD 使用者不會被要求改密碼。
 - 回應與 `GET /api/auth/me` 的 `roles` 是**有效角色**：Django 超級使用者（`is_superuser`）一律含 `"admin"`，即使資料庫裡存的 `roles` 是空的（後端對這種帳號本來就放行所有檢查）。只改輸出，不寫回資料庫；`/api/admin/users*` 仍回資料庫裡存的角色。
-- **登入鎖定**（django-axes；帳號比對與計數都不分大小寫，`a123` 與 `A123` 算同一個帳號）：同一帳號連續失敗 5 次（`AXES_FAILURE_LIMIT`）即鎖定 5 分鐘（`AXES_COOLOFF_MINUTES`）。從第 5 次失敗起，鎖定期間連正確密碼也一律回 **429** `{"detail": "登入失敗次數過多，請 5 分鐘後再試", "code": "locked"}`（訊息中的分鐘數取自 `AXES_COOLOFF_MINUTES`）；鎖定期間的嘗試不會延長鎖定（API 登入與 Django 後台都一樣）。登入成功會清掉該帳號先前的失敗次數。管理員重設該帳號的密碼（或 `seed_admin --reset`、`manage.py axes_reset_username <帳號>`）即時解鎖。Django 後台（`/admin/login/`）的失敗與此共用同一個計數。
+- **登入鎖定**（django-axes；帳號比對與計數都不分大小寫，`a123` 與 `A123` 算同一個帳號）：同一帳號連續失敗 5 次（`AXES_FAILURE_LIMIT`）即鎖定 5 分鐘（`AXES_COOLOFF_MINUTES`）。從第 5 次失敗起，鎖定期間連正確密碼也一律回 **429** `{"detail": "登入失敗次數過多，請 5 分鐘後再試", "code": "locked"}`（訊息中的分鐘數取自 `AXES_COOLOFF_MINUTES`）；鎖定期間的嘗試不會延長鎖定（API 登入與 Django 後台都一樣）。登入成功會清掉該帳號先前的失敗次數。管理員重設該帳號的密碼（或 `seed_admin --reset`、`python manage.py unlock_account <員編>`——不分大小寫）即時解鎖。Django 後台（`/admin/login/`）的失敗與此共用同一個計數。
 - 注意：經 Next 代理後 Django 看到的來源位址對所有人都相同，鎖定實際上是「每個帳號」而非「每個來源」——知道帳號名稱的人可以用幾次錯誤密碼鎖住該帳號（每個冷卻期可重來一次）。本機制擋的是密碼猜測，不是阻斷服務；per-IP 限流要在平台邊緣（LB / WAF）做。
 - `must_change_password` 為 `true` 時登入仍回 200，但在改完密碼之前，除了 `me`、`logout`、`change-password` 以外的 API 一律 403 `password_change_required`。
 
@@ -325,7 +325,7 @@
 {"temporary_password": "Xk7#mQ2-vR9pLw"}
 ```
 臨時密碼至少 12 個字元，含大小寫字母、數字、符號，並通過密碼規則。
-- **AD 帳號不能重設密碼**：`LDAP_ENABLED=true` 且該帳號不在 `LDAP_LOCAL_ONLY_ACCOUNTS` 內時回 400 `{"detail": "此帳號以 AD 登入，不需重設密碼；密碼問題請洽資訊室", "code": "ldap_managed"}`，不產生密碼、不解除鎖定。要解鎖 AD 帳號：等 5 分鐘，或在伺服器上 `manage.py axes_reset_username <帳號>`。
+- **AD 帳號不能重設密碼**：`LDAP_ENABLED=true` 且該帳號不在 `LDAP_LOCAL_ONLY_ACCOUNTS` 內時回 400 `{"detail": "此帳號以 AD 登入，不需重設密碼；密碼問題請洽資訊室", "code": "ldap_managed"}`，不產生密碼、不解除鎖定。要解鎖 AD 帳號：等 5 分鐘，或在伺服器上 `python manage.py unlock_account <員編>`（不分大小寫）。
 
 ---
 

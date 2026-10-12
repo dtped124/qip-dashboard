@@ -176,21 +176,21 @@ docker builder prune -f --filter until=24h
 
 > 只在**要啟用 AD 登入**時做；AD 預設關閉，不啟用就跳過這一節。需要連得到院內 AD：正式機，或連上院內 Wi-Fi 的開發機。對象：品管中心主管，資訊室在場（提供 AD 設定與 AD 測試帳號）。
 > **順序不能換**：7A-1 一定要在 AD 開啟**之前**做，否則開了之後系統沒有任何管理者能登入。AD 密碼**只由你親自輸入**，不要貼進聊天、文件或截圖；本節不記錄任何帳號密碼。
-> 指令的寫法：開發機在專案目錄用 `docker compose exec -T api python manage.py …`；正式機用 `docker compose -p qip-prod exec api python manage.py …`。第一次要先 `docker compose build api`（新增了 `ldap3` 套件；build 前 `df -h /c` 剩 15 GB 以上）。設定檔：開發是 `backend/.env`，正式是 `.env.prod`，兩者都不入庫。
+> 指令的寫法：開發機在專案目錄用 `docker compose exec -T api python manage.py …`；正式機用 `docker compose -f docker-compose.prod.yml --env-file .env.prod exec api python manage.py …`。第一次要先 `docker compose build api`（新增了 `ldap3` 套件；build 前 `df -h /c` 剩 15 GB 以上）。設定檔：開發是 `backend/.env`，正式是 `.env.prod`，兩者都不入庫。
 
 | 步驟 | 動作 | ✅ 預期 | 勾 |
 |---|---|---|---|
 | 7A-1 | **AD 還關著時**，admin 登入 → `/entry/admin` →「+ 新增使用者」→ 帳號填**你自己的員工編號**（要與 AD 帳號一致）、姓名、勾「管理員」→ 儲存 | 清單多一筆你的帳號。此時 AD 沒開，仍會彈出臨時密碼視窗：關掉即可，啟用 AD 後用不到 | ☐ |
 | 7A-2 | 編輯設定檔：`LDAP_ENABLED=true`，並填 `LDAP_SERVER_IP`、`LDAP_BIND_USER`、`LDAP_BIND_PASS`、`LDAP_BASE_DN`（四個值由資訊室提供）；`LDAP_LOCAL_ONLY_ACCOUNTS` **先留空** | 存檔後 `git status` 看不到 `.env`／`.env.prod`（已列入 `.gitignore`） | ☐ |
-| 7A-3 | 重啟 api：開發 `docker compose restart api`；正式 `docker compose -f docker-compose.prod.yml --env-file .env.prod up -d api`（`restart` 不會重讀正式的 `env_file`）。再看 log：`docker compose logs api` | 有一行 `[bootstrap] AD 驗證：啟用（…，本地帳號：無，所有帳號含管理者都必須通過 AD）`；主機與埠和你填的一致；log 裡**看不到**任何密碼。若寫「未啟用」，見 `docs/DEPLOYMENT.md` §8 | ☐ |
+| 7A-3 | 重啟 api：開發 `docker compose restart api`；正式 `docker compose -f docker-compose.prod.yml --env-file .env.prod up -d api`（`restart` 不會重讀正式的 `env_file`）。再看 log：開發 `docker compose logs api`；正式 `docker compose -f docker-compose.prod.yml --env-file .env.prod logs api` | 有一行 `[bootstrap] AD 驗證：啟用（…，本地帳號：無，所有帳號含管理者都必須通過 AD）`；主機與埠和你填的一致；log 裡**看不到**任何密碼。若寫「未啟用」，見 `docs/DEPLOYMENT.md` §8 | ☐ |
 | 7A-4 | 執行 `ldap_check`（不帶參數） | 顯示服務帳號 bind 成功，結束碼 0。失敗：先找資訊室確認 389 連得通 | ☐ |
 | 7A-5 | 執行 `ldap_check --user <AD 測試帳號的員編>` | 顯示找到、姓名、mail、部門（來自 AD）。不需要輸入密碼 | ☐ |
-| 7A-6 | 執行 `ldap_check --audit` | 列出「系統裡啟用中、AD 查無」的帳號。**標 `[ADMIN]` 的管理者一個都不能在裡面**——你自己的帳號不該出現；`admin`、示範帳號（demo_*）出現是正常的（AD 沒有它們）。有 `[ADMIN]` 就回到 7A-1 修正員編 | ☐ |
+| 7A-6 | 執行 `ldap_check --audit` | 列出「系統裡啟用中、AD 查無」的帳號。清單為空時 `admin` 出現是預期（標註「seed 管理者；要保留請列入 `LDAP_LOCAL_ONLY_ACCOUNTS`」，不算警告）；示範帳號（demo_*）出現也正常（AD 沒有它們）。**除了 `admin` 以外不得有任何 `[ADMIN]` 查無**——你自己的帳號不該出現；否則結尾有 WARNING、結束碼 2，回到 7A-1 修正員編。只有非管理者查無或姓名不一致時結束碼 0 | ☐ |
 | 7A-7 | 無痕視窗用**你自己的員編＋AD 密碼**登入 `/entry/login` | 登入成功、落在儀表板，**不會被要求改密碼**；登入頁副標是「請以員工編號與院內 AD 密碼登入」。F12 Console 執行 `fetch('/api/auth/me').then(r => r.json()).then(console.log)`，`auth_method` 是 `"ldap"`、`auth_source` 是 `"ldap"` | ☐ |
 | 7A-8 | 用資訊室提供的 **AD 測試帳號**（系統裡還沒建）登入，密碼自己輸入 | 紅字「AD 驗證成功，但系統尚未開通此帳號，請洽品管中心」；不是「帳號或密碼錯誤」，也不是英文錯誤 | ☐ |
 | 7A-9 | 用 7A-7 的管理者登入 → 帳號管理 →「+ 新增使用者」→ 帳號填 AD 測試帳號的員編、姓名、勾「填報者」。先看對話框，再儲存 | 對話框**沒有密碼欄**，改顯示「AD 帳號不需設定密碼…」的說明，帳號欄下提示須與 AD 帳號一致。儲存後**不彈**臨時密碼視窗；清單新那列帳號旁有 `AD` 小標，且**沒有**「重設密碼」鈕 | ☐ |
 | 7A-10 | 再用 AD 測試帳號登入 | 登入成功、落在 `/entry`；不被要求改密碼；`/api/auth/me` 的 `auth_method` 為 `"ldap"` | ☐ |
-| 7A-11 | 登出，用 AD 測試帳號輸入**錯誤的 AD 密碼 5 次** | 前 4 次「帳號或密碼錯誤」；第 5 次起「登入失敗次數過多，請 5 分鐘後再試」。鎖定中輸入正確的 AD 密碼也一樣被擋。**只用測試帳號做這步**：錯誤的密碼也會累計到 AD 自己的鎖定原則。解鎖：等 5 分鐘，或 `manage.py axes_reset_username <帳號>`（AD 帳號沒有「重設密碼」） | ☐ |
+| 7A-11 | 登出，用 AD 測試帳號輸入**錯誤的 AD 密碼 5 次** | 前 4 次「帳號或密碼錯誤」；第 5 次起「登入失敗次數過多，請 5 分鐘後再試」。鎖定中輸入正確的 AD 密碼也一樣被擋。**只用測試帳號做這步**：錯誤的密碼也會累計到 AD 自己的鎖定原則。解鎖：等 5 分鐘，或在伺服器上執行 `python manage.py unlock_account <員編>`（不分大小寫；AD 帳號沒有「重設密碼」） | ☐ |
 | 7A-12 | 用 `admin` 的**本地密碼**登入（此時清單為空） | 被擋：「帳號或密碼錯誤」。這是設計：純 AD，沒通過 AD 就進不來。（`admin` 被鎖也一樣等 5 分鐘） | ☐ |
 | 7A-13 | 把 `LDAP_LOCAL_ONLY_ACCOUNTS=admin` 寫進設定檔，重啟 api（同 7A-3）；再用 `admin` 的本地密碼登入 | 狀態行的「本地帳號」列出 `admin`；`admin` 登入成功；7A-10 的 AD 測試帳號仍然走 AD 登入。**驗完依你的決定保留或清空**（保留 = AD 當機時還有緊急管理者；見 `docs/DEPLOYMENT.md` §4.1 第 2 步） | ☐ |
 | 7A-14 | 以管理者重新看帳號管理頁（AD 帳號列與 `admin` 那列） | AD 帳號旁有 `AD` 小標、無「重設密碼」；`admin` 與其他本地帳號沒有 `AD` 小標，「重設密碼」仍在。（選做）AD 登入的 session 呼叫 `POST /api/auth/change-password` 會得到 403 `ldap_managed`「您的密碼由院內 AD 管理，如需變更請洽資訊室」，自動化測試已涵蓋 | ☐ |
