@@ -1,4 +1,6 @@
 """Production settings (container / cloud): everything that varies per deployment comes from the environment."""
+from pathlib import Path
+
 from django.core.exceptions import ImproperlyConfigured
 
 from . import base as _base
@@ -105,6 +107,32 @@ STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
 }
+
+def frontend_dist_dir(env):
+    """Return the absolute path of the static front-end export to serve from ``/``, or "" when it is off.
+
+    Used by the portable ("green") Windows build only: colleagues' PCs cannot run Node, so the Next.js app is
+    exported to plain files (``npm run build:export`` -> ``out/``) and Django serves them itself through WhiteNoise.
+    Front end and API then share one origin, which leaves CORS, CSRF and cookies untouched. The Docker deployment
+    leaves FRONTEND_DIST_DIR empty and keeps Next.js as the front door.
+    """
+    raw = env("FRONTEND_DIST_DIR", default="").strip()
+    if not raw:
+        return ""
+    path = Path(raw).resolve()
+    if not path.is_dir():
+        raise ImproperlyConfigured(f"FRONTEND_DIST_DIR is not an existing directory: {raw}")
+    return str(path)
+
+
+FRONTEND_DIST_DIR = frontend_dist_dir(env)
+if FRONTEND_DIST_DIR:
+    # WHITENOISE_ROOT serves the export at "/". WhiteNoise answers only for files that exist; every other path
+    # (/api, /admin, /healthz) falls through to Django. WHITENOISE_INDEX_FILE makes "/entry/login/" return
+    # entry/login/index.html and redirects "/entry/login" to the slash form (Next's trailingSlash export layout).
+    WHITENOISE_ROOT = FRONTEND_DIST_DIR
+    WHITENOISE_INDEX_FILE = True
+
 
 # JSON only: no browsable API (its HTML form is not something to expose on the internet).
 REST_FRAMEWORK = {

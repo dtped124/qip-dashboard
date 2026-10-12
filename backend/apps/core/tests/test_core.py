@@ -380,7 +380,7 @@ def load_prod(monkeypatch):
 
     def load(**env):
         for key in ("DJANGO_ALLOWED_HOSTS", "SECURE_HSTS_SECONDS", "SECURE_SSL_REDIRECT",
-                    "SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE", "COLLECTSTATIC_ONLY"):
+                    "SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE", "COLLECTSTATIC_ONLY", "FRONTEND_DIST_DIR"):
             monkeypatch.delenv(key, raising=False)
         monkeypatch.setenv("DJANGO_SECRET_KEY", VALID_SECRET_KEY)
         for key, value in env.items():
@@ -452,6 +452,25 @@ class TestProductionSettings:
         assert not hasattr(base, "CORS_ALLOWED_ORIGIN_REGEXES")
         assert not hasattr(prod, "CORS_ALLOWED_ORIGIN_REGEXES")
         assert "localhost" not in " ".join(prod.CSRF_TRUSTED_ORIGINS + prod.CORS_ALLOWED_ORIGINS)
+
+    def test_the_static_front_end_is_off_unless_a_directory_is_given(self, load_prod):
+        prod = load_prod(DJANGO_ALLOWED_HOSTS="qip.example.org")
+        assert prod.FRONTEND_DIST_DIR == ""
+        assert not hasattr(prod, "WHITENOISE_ROOT")
+        assert not hasattr(prod, "WHITENOISE_INDEX_FILE")
+
+    def test_the_portable_build_serves_the_front_end_export_from_the_root(self, load_prod, tmp_path):
+        prod = load_prod(DJANGO_ALLOWED_HOSTS="localhost", FRONTEND_DIST_DIR=str(tmp_path))
+        assert Path(prod.WHITENOISE_ROOT) == tmp_path.resolve()
+        assert prod.WHITENOISE_INDEX_FILE is True
+
+    def test_a_missing_front_end_directory_refuses_to_start(self, load_prod, tmp_path):
+        with pytest.raises(ImproperlyConfigured, match="FRONTEND_DIST_DIR"):
+            load_prod(DJANGO_ALLOWED_HOSTS="localhost", FRONTEND_DIST_DIR=str(tmp_path / "no-such-out"))
+        a_file = tmp_path / "out.txt"
+        a_file.write_text("x")
+        with pytest.raises(ImproperlyConfigured, match="FRONTEND_DIST_DIR"):
+            load_prod(DJANGO_ALLOWED_HOSTS="localhost", FRONTEND_DIST_DIR=str(a_file))
 
     def test_celery_is_gone(self):
         assert not any(name.startswith("CELERY_") for name in dir(settings))

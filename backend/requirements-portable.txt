@@ -1,0 +1,26 @@
+# Dependencies of the portable ("green") Windows build (deploy/portable/build-runtime.ps1).
+#
+# SYNC RULE: this file is a copy of requirements.txt, so keep the two in step. When a line is added, removed or
+# re-pinned in requirements.txt, make the same change here. The only intended differences are:
+#   - gunicorn is left out (it cannot run on Windows); waitress is the WSGI server instead
+#   - typing_extensions is listed by hand: the build machine runs `pip download` with its own Python (3.14), so
+#     the marker `python_version < "3.13"` on psycopg's dependency is evaluated for the wrong interpreter and the
+#     package would be missing from the embedded Python 3.12
+#   - ldap3 is added ahead of time for the AD login (Phase 9 branch; requirements.txt does not list it yet and this
+#     branch's code does not import it). Drop this line if the AD login is not shipped.
+# (-r is not used on purpose: it would pull gunicorn back in.)
+django>=5.0,<6.0
+djangorestframework>=3.15
+django-cors-headers>=4.3
+django-axes==8.3.1
+psycopg[binary]>=3.1
+redis>=5.0
+django-environ>=0.11
+openpyxl>=3.1
+xlrd>=2.0
+numpy>=1.26
+python-Levenshtein>=0.25
+whitenoise>=6.6
+waitress==3.0.2
+typing_extensions>=4.12
+ldap3==2.9.1
