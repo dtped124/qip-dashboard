@@ -178,7 +178,7 @@ AD 登入**預設關閉**。關閉時系統行為與今天完全相同；由資�
    docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm -e RUN_BOOTSTRAP=0 -e LDAP_ENABLED=true api python manage.py ldap_check --audit
    ```
 
-   （`.env.prod` 的四個必填鍵要已填好；結果怎麼判讀見第 5 步。）預檢沒問題再重啟 api。 改 `.env.prod` 後要**重建容器**才會讀到新值（`restart` 不會重新讀 `env_file`）：`docker compose -f docker-compose.prod.yml --env-file .env.prod up -d api`。log 要看到 `[bootstrap] AD 驗證：啟用（…）`，括號裡的主機、埠與本地帳號清單要和你填的一致。看到「未啟用」代表沒生效，見 §8。**啟用後，啟用前以本地密碼登入的 session 會在下一個請求被自動登出，使用者需重新登入（走 AD）；本地帳號清單內的帳號與 AD 登入的 session 不受影響。**
+   （`.env.prod` 的四個必填鍵要已填好；結果怎麼判讀見第 5 步。）預檢沒問題再重啟 api。 改 `.env.prod` 後要**重建容器**才會讀到新值（`restart` 不會重新讀 `env_file`）：`docker compose -f docker-compose.prod.yml --env-file .env.prod up -d api`。log 要看到 `[bootstrap] AD 驗證：啟用（…）`，括號裡的主機、埠與本地帳號清單要和你填的一致。看到「未啟用」代表沒生效，見 §8。**啟用後，啟用前以本地密碼登入的 session 會在下一個請求被自動登出，使用者需重新登入（走 AD）；本地帳號清單內的帳號與 AD 登入的 session 不受影響。**（這個自動登出只作用在 `/api/…` 請求；Django 後台 `/admin/` 的舊 session 不在此限，啟用後請在後台登出再重新登入。）
 5. **【資訊室與品管中心】用 `ldap_check` 驗證。**
 
    ```bash
