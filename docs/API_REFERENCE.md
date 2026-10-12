@@ -14,6 +14,14 @@
 
 ## 🔐 認證 API
 
+### GET /api/auth/options
+登入頁用的公開設定（免登入；GET 不需要 CSRF token；回應帶 `Cache-Control: no-store`）。
+```json
+// Response 200
+{"ldap_enabled": false}
+```
+- `ldap_enabled` 為 `true` 時，登入頁副標改為「請以員工編號與院內 AD 密碼登入」，帳號管理頁的新增對話框不顯示密碼欄。只回這一個布林值，不洩漏任何 AD 設定。
+
 ### POST /api/auth/login
 使用者登入（豁免 CSRF）
 ```json
@@ -30,12 +38,22 @@
   "campus_name": "竹北",
   "roles": ["reporter"],
   "is_active": true,
-  "must_change_password": false
+  "must_change_password": false,
+  "auth_source": "local",
+  "auth_method": "local"
 }
 ```
 - 帳號或密碼錯誤：400 `{"non_field_errors": ["帳號或密碼錯誤"]}`。
+- **`auth_source`**（所有使用者物件都有，含 `GET /api/admin/users`）：這個帳號平常用什麼登入。`"ldap"` = 用院內 AD 密碼；`"local"` = 用本系統的本地密碼。`LDAP_ENABLED` 關閉時一律 `"local"`；啟用時，不在 `LDAP_LOCAL_ONLY_ACCOUNTS` 清單內的帳號是 `"ldap"`。不是資料庫欄位，由設定推得。
+- **`auth_method`**（只在登入與 `GET /api/auth/me` 的回應）：**這一次 session** 是怎麼登入的，`"ldap"` 或 `"local"`。LDAP 啟用且這個 session 的認證後端是 AD 才是 `"ldap"`；LDAP 關閉後，原本的 AD session 立刻變回 `"local"`。
+- **AD 登入**（`LDAP_ENABLED=true`，預設關閉；設定見 `docs/DEPLOYMENT.md`）：非 `LDAP_LOCAL_ONLY_ACCOUNTS` 的帳號先走 AD 兩階段驗證（服務帳號搜尋 → 以使用者 DN 驗證密碼），本地密碼不會被拿來登入；AD 成功且系統有此帳號才登入，角色來自本地帳號。額外的回應：
+  - **403** `{"detail": "AD 驗證成功，但系統尚未開通此帳號，請洽品管中心", "code": "account_not_provisioned"}`：AD 認得這個人，但系統沒有他的帳號（`LDAP_AUTO_CREATE=false`）。計入登入鎖定。
+  - **503** `{"detail": "目前無法連線到院內 AD 驗證服務，請稍後再試或洽資訊室", "code": "ldap_unavailable"}`：連不上 AD、逾時，或服務帳號 bind 失敗。**不計入登入鎖定**；失敗後 30 秒內其他登入直接回 503（斷路器）。
+  - AD 密碼錯、AD 查無此人、帳號已停用：一律 400 `{"non_field_errors": ["帳號或密碼錯誤"]}`，計入登入鎖定（不洩漏帳號是否存在於 AD）。
+  - `LDAP_LOCAL_ONLY_ACCOUNTS` 內的帳號不打 AD，只比本地密碼；清單為空時，連 `admin` 以本地密碼登入也是 400。
+- AD 登入成功時，若帳號的 `must_change_password` 為 `true`，會自動清成 `false` 並作廢它的本地臨時密碼，所以 AD 使用者不會被要求改密碼。
 - 回應與 `GET /api/auth/me` 的 `roles` 是**有效角色**：Django 超級使用者（`is_superuser`）一律含 `"admin"`，即使資料庫裡存的 `roles` 是空的（後端對這種帳號本來就放行所有檢查）。只改輸出，不寫回資料庫；`/api/admin/users*` 仍回資料庫裡存的角色。
-- **登入鎖定**（django-axes）：同一帳號連續失敗 5 次（`AXES_FAILURE_LIMIT`）即鎖定 5 分鐘（`AXES_COOLOFF_MINUTES`）。從第 5 次失敗起，鎖定期間連正確密碼也一律回 **429** `{"detail": "登入失敗次數過多，請 5 分鐘後再試", "code": "locked"}`（訊息中的分鐘數取自 `AXES_COOLOFF_MINUTES`）；鎖定期間的嘗試不會延長鎖定（API 登入與 Django 後台都一樣）。登入成功會清掉該帳號先前的失敗次數。管理員重設該帳號的密碼（或 `seed_admin --reset`、`manage.py axes_reset_username <帳號>`）即時解鎖。Django 後台（`/admin/login/`）的失敗與此共用同一個計數。
+- **登入鎖定**（django-axes；帳號比對與計數都不分大小寫，`a123` 與 `A123` 算同一個帳號）：同一帳號連續失敗 5 次（`AXES_FAILURE_LIMIT`）即鎖定 5 分鐘（`AXES_COOLOFF_MINUTES`）。從第 5 次失敗起，鎖定期間連正確密碼也一律回 **429** `{"detail": "登入失敗次數過多，請 5 分鐘後再試", "code": "locked"}`（訊息中的分鐘數取自 `AXES_COOLOFF_MINUTES`）；鎖定期間的嘗試不會延長鎖定（API 登入與 Django 後台都一樣）。登入成功會清掉該帳號先前的失敗次數。管理員重設該帳號的密碼（或 `seed_admin --reset`、`manage.py axes_reset_username <帳號>`）即時解鎖。Django 後台（`/admin/login/`）的失敗與此共用同一個計數。
 - 注意：經 Next 代理後 Django 看到的來源位址對所有人都相同，鎖定實際上是「每個帳號」而非「每個來源」——知道帳號名稱的人可以用幾次錯誤密碼鎖住該帳號（每個冷卻期可重來一次）。本機制擋的是密碼猜測，不是阻斷服務；per-IP 限流要在平台邊緣（LB / WAF）做。
 - `must_change_password` 為 `true` 時登入仍回 200，但在改完密碼之前，除了 `me`、`logout`、`change-password` 以外的 API 一律 403 `password_change_required`。
 
@@ -43,7 +61,7 @@
 登出（清除 session）
 
 ### GET /api/auth/me
-取得當前登入使用者資訊（`must_change_password` 為 true 時也可呼叫）。回應（含 403）一律帶 `Cache-Control: no-store`，瀏覽器與 proxy 都不得快取「現在是誰登入」。前端（`lib/auth/store.ts`）每次載入頁面只呼叫一次。
+取得當前登入使用者資訊（`must_change_password` 為 true 時也可呼叫；含 `auth_source` 與 `auth_method`，見 `POST /api/auth/login`）。回應（含 403）一律帶 `Cache-Control: no-store`，瀏覽器與 proxy 都不得快取「現在是誰登入」。前端（`lib/auth/store.ts`）每次載入頁面只呼叫一次。
 
 ### POST /api/auth/change-password
 更改自己的密碼（`must_change_password` 為 true 時也可呼叫）
@@ -54,6 +72,7 @@
 // Response 200
 {"detail": "密碼已更新"}
 ```
+- **403** `{"detail": "您的密碼由院內 AD 管理，如需變更請洽資訊室", "code": "ldap_managed"}`：目前這個 session 是用 AD 登入的（`auth_method` 為 `"ldap"`）。AD 密碼不在本系統改，閘門在嘗試次數計數**之前**，不會累計猜測次數。用 `LDAP_LOCAL_ONLY_ACCOUNTS` 內的本地帳號登入者不受影響。
 - 400：`current_password` 不正確、新密碼與目前密碼相同，或新密碼不符規則；錯誤依欄位回傳，如 `{"new_password": ["...", "..."]}`。
 - **嘗試次數限制**（`PASSWORD_CHANGE_FAILURE_LIMIT`，預設 5；`PASSWORD_CHANGE_COOLOFF_MINUTES`，預設 5）：以使用者 id 在 Django cache 計數。同一使用者 **5 分鐘內連續 5 次**沒能證明目前密碼的呼叫照常回應（密碼錯誤是 400）；**第 6 次起回 429** `{"detail": "嘗試次數過多，請 5 分鐘後再試", "code": "too_many_attempts"}`，連正確密碼也一樣、不看 body，直到冷卻期過去。被拒的呼叫不會延長冷卻；證明了目前密碼（改密碼成功，或密碼對但新密碼被拒）就歸零，管理員重設該帳號的密碼（含 `seed_admin --reset`）也會歸零。這是為了讓被盜的 session 不能拿此端點猜密碼（登入鎖定看不到這裡的猜測）。計數存在 cache：`REDIS_URL` 為空時用行程內記憶體（每個 worker 各算各的）；cache 連不上（Redis 掛掉）時不節流、記一筆 warning，呼叫照常處理，不會回 500。
 - 密碼規則（`AUTH_PASSWORD_VALIDATORS`）：至少 10 個字元、不得是常見密碼、不得全為數字、不得與帳號／姓名／Email 太相似。
@@ -291,7 +310,9 @@
 {"id": 7, "employee_id": "10001", "...": "...", "must_change_password": true, "temporary_password": "Xk7#mQ2-vR9pLw"}
 ```
 - `password` 留空 → 系統產生隨機臨時密碼，**只在這個回應出現一次**（回應帶 `Cache-Control: no-store`，不寫 log、不存明文）；有填 → 必須符合密碼規則，不符回 400 `{"password": [...]}`，回應不含密碼。
-- 新帳號一律 `must_change_password = true`。
+- 新帳號一律 `must_change_password = true`（AD 帳號例外，見下）。
+- `employee_id` 不分大小寫檢查重複：已有 `abc` 時再建 `ABC` 回 400 `{"employee_id": ["此帳號已存在（帳號不分大小寫）"]}`（AD 與登入都不分大小寫，兩筆會是同一個人）。
+- **AD 帳號**（`LDAP_ENABLED=true`，且 `employee_id` 不在 `LDAP_LOCAL_ONLY_ACCOUNTS` 內）：帳號（員工編號）須與 AD 的 `sAMAccountName` 一致。系統**不產生臨時密碼**：帳號設為不可用密碼、`must_change_password = false`，201 回應**沒有** `temporary_password`；若請求帶了非空的 `password`，回 400 `{"detail": "AD 帳號不需要設定密碼，登入時使用 AD 密碼", "code": "ldap_managed"}`，不建立帳號。清單內的本地帳號照舊（產生臨時密碼、回傳一次）。
 - `roles` 必須是清單，且每個值都是 `reporter` / `reviewer` / `admin` / `viewer` 之一（重複的會去除）；否則 400 `{"roles": [...]}`。
 
 ### GET/PATCH/DELETE /api/admin/users/{pk}
@@ -304,6 +325,7 @@
 {"temporary_password": "Xk7#mQ2-vR9pLw"}
 ```
 臨時密碼至少 12 個字元，含大小寫字母、數字、符號，並通過密碼規則。
+- **AD 帳號不能重設密碼**：`LDAP_ENABLED=true` 且該帳號不在 `LDAP_LOCAL_ONLY_ACCOUNTS` 內時回 400 `{"detail": "此帳號以 AD 登入，不需重設密碼；密碼問題請洽資訊室", "code": "ldap_managed"}`，不產生密碼、不解除鎖定。要解鎖 AD 帳號：等 5 分鐘，或在伺服器上 `manage.py axes_reset_username <帳號>`。
 
 ---
 
@@ -712,6 +734,14 @@ HIS 系統推送 webhook（預留）
 | `password_change_required` | 已登入，但 `must_change_password` 為 true（新帳號、被管理員重設密碼）→ 前端應導向登入頁的改密碼表單；只有 `me`、`logout`、`change-password` 不受限 |
 | `csrf_failed` | 寫入請求缺少或帶錯 `X-CSRFToken` |
 
+AD 登入（`LDAP_ENABLED=true`）另有三個 code，body 同樣是 `{"detail": "...", "code": "..."}`：
+
+| code | HTTP | 出現位置與意義 |
+|------|------|---------------|
+| `account_not_provisioned` | 403 | `POST /api/auth/login`：AD 驗證成功，但系統沒有此帳號 → 請洽品管中心開通。計入登入鎖定 |
+| `ldap_unavailable` | 503 | `POST /api/auth/login`：連不上院內 AD、逾時或服務帳號 bind 失敗 → 稍後再試或洽資訊室。不計入登入鎖定；失敗後 30 秒內直接回 503 |
+| `ldap_managed` | 403／400 | 403：`POST /api/auth/change-password`，AD 登入的 session 不能在本系統改密碼。400：`POST /api/admin/users` 對 AD 帳號指定了 `password`，或 `POST /api/admin/users/{pk}/reset-password` 對 AD 帳號 → 密碼由 AD 管理，洽資訊室 |
+
 另有兩種 **HTTP 429**：`locked`（`{"detail": "登入失敗次數過多，請 5 分鐘後再試", "code": "locked"}`）是登入失敗次數超過上限，見 `POST /api/auth/login`；`too_many_attempts`（`{"detail": "嘗試次數過多，請 5 分鐘後再試", "code": "too_many_attempts"}`）是變更密碼時沒能證明目前密碼的次數超過上限，見 `POST /api/auth/change-password`。
 
 DRF 端點的其他例外（404、405 等）也會多一個 `code`；欄位驗證錯誤（`{"欄位": [...]}`）維持原格式。
@@ -725,6 +755,7 @@ DRF 端點的其他例外（404、405 等）也會多一個 `code`；欄位驗�
 | 端點 | 允許角色 |
 |------|---------|
 | `POST /api/auth/login` | 匿名（唯一豁免 CSRF 的端點） |
+| `GET /api/auth/options` | 匿名（GET，無 CSRF 問題） |
 | `/api/auth/me`、`logout`、`change-password` | 已登入即可（含尚未指派角色者，以及必須先變更密碼者）。**其餘所有端點**對 `must_change_password` 為 true 的使用者一律 403 `password_change_required`，不論角色 |
 | `GET /api/v1/dashboard/`、`GET /api/v1/indicators/`、`GET /api/v1/indicators/{code}/`（含 `data`、`alerts`、`summaries`、`analysis`）、`GET /api/v1/tcpi/`、`GET /api/v1/indicators/export/element-list/`、`GET /api/dashboard/entry-data`、`entry-benchmarks` | 讀者 |
 | `PATCH /api/v1/indicators/{code}/`、`POST /api/v1/tcpi/`、`GET /api/v1/indicators/export/`（全量匯出）、`/api/v1/imports/*` | admin |
