@@ -61,7 +61,7 @@
 | `docs/DEPLOYMENT.md`、`docs/API_REFERENCE.md`、`docs/ACCEPTANCE_GUIDE.md`、`docs/USER_MANUAL.md`、`docs/DEVELOPMENT_GUIDE.md`、`docs/CHANGELOG.md`、`HANDOFF.md` | 見上 |
 
 ### ✅ 測試與驗證
-- 自動化（全用假 AD，`ldap3.Connection` 一律 mock）：設定驗證、AD 客戶端各狀態（含白名單、跳脫、兩個逾時、unbind 例外、斷路器、log 不含密碼）、登入矩陣（AD 成功／失敗／連不上／未開通／停用、清單內外帳號、AUTO_CREATE、鎖定與大小寫）、帳號 API（AD 帳號建立與重設）、`ldap_check` 四種模式、bootstrap 狀態行。數字：後端容器 `pytest` 976 passed／23 skipped／1 既有失敗（`test_binomial_rare_event_returns_imr`，非本案），本 phase 新增 196 個後端測試
+- 自動化（全用假 AD，`ldap3.Connection` 一律 mock）：設定驗證、AD 客戶端各狀態（含白名單、跳脫、兩個逾時、unbind 例外、斷路器、log 不含密碼）、登入矩陣（AD 成功／失敗／連不上／未開通／停用、清單內外帳號、AUTO_CREATE、鎖定與大小寫）、帳號 API（AD 帳號建立與重設）、`ldap_check` 四種模式、bootstrap 狀態行。數字：後端容器 `pytest` 991 passed／23 skipped／1 既有失敗（`test_binomial_rare_event_returns_imr`，非本案），本 phase 新增 211 個後端測試
 - 迴歸：`LDAP_ENABLED` 未設時既有測試全數維持基準；`ruff`、`manage.py check`、`makemigrations --check --dry-run` 的最終結果見 PR
 - 前端：`npm run test:unit` 152 個全綠（新增 `lib/auth/loginError.test.ts`）；`npm run lint`、`npx tsc --noEmit` 的最終結果見 PR
 - 變異檢查（Opus 稽核）：3 個變異——AD 拒絕時退回本地密碼、AD 連不上改計入鎖定、使用者 bind 例外 fail-open——各被 2–4 個測試抓到
