@@ -6,20 +6,19 @@ import { login, changePassword, logout } from '@/lib/entry/api'
 import { ApiError } from '@/lib/http'
 import { homeFor, safeNextPath } from '@/lib/auth/roles'
 import { useAuthStore } from '@/lib/auth/store'
+import { useAuthOptions } from '@/lib/auth/useAuthOptions'
+import {
+  NO_ROLE_MESSAGE,
+  UNREACHABLE_MESSAGE,
+  changePasswordBlockedMessage,
+  isUnreachable,
+  loginErrorMessage,
+  toErrorInfo,
+} from '@/lib/auth/loginError'
 import type { User } from '@/lib/entry/types'
 
-const NO_ROLE_MESSAGE = '此帳號尚未指派身分，請聯絡品管中心'
-const LOCKED_FALLBACK_MESSAGE = '登入失敗次數過多，請稍後再試'
 /** Same minimum as the backend's AUTH_PASSWORD_VALIDATORS; the backend stays the judge of everything else. */
 const MIN_PASSWORD_LENGTH = 10
-
-function loginErrorMessage(e: unknown): string {
-  // 429 = locked after too many failed attempts; the backend's `detail` says how long to wait.
-  if (e instanceof ApiError && e.status === 429) {
-    return e.code === 'locked' ? e.message : LOCKED_FALLBACK_MESSAGE
-  }
-  return e instanceof Error ? e.message : '登入失敗'
-}
 
 /** The backend answers {current_password: [...]} / {new_password: [...]}; show every reason it gives. */
 function changePasswordErrorMessage(e: unknown): string {
@@ -30,7 +29,9 @@ function changePasswordErrorMessage(e: unknown): string {
       .filter((reason): reason is string => typeof reason === 'string')
     if (reasons.length > 0) return reasons.join('；')
   }
-  return e instanceof Error ? e.message : '密碼修改失敗'
+  const info = toErrorInfo(e)
+  if (isUnreachable(info)) return UNREACHABLE_MESSAGE
+  return info.message.trim() || '密碼修改失敗'
 }
 
 export default function LoginPage() {
@@ -42,6 +43,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const { ldap_enabled: ldapEnabled } = useAuthOptions()
 
   // 強制改密碼
   const [showChangePassword, setShowChangePassword] = useState(false)
@@ -51,6 +53,8 @@ export default function LoginPage() {
   const [newPwd, setNewPwd] = useState('')
   const [confirmPwd, setConfirmPwd] = useState('')
   const [changingPwd, setChangingPwd] = useState(false)
+  // Set when the backend says the password lives in AD (403 ldap_managed): the form has nothing to offer then.
+  const [adManagedMessage, setAdManagedMessage] = useState<string | null>(null)
 
   /**
    * Leave the login page: for the page the guard sent us from (`?next=`, if it is safe and the user may open
@@ -102,14 +106,15 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!employeeId || !password) {
+    const id = employeeId.trim()
+    if (!id || !password) {
       setError('請輸入帳號與密碼')
       return
     }
     setLoading(true)
     setError(null)
     try {
-      const user = await login(employeeId, password)
+      const user = await login(id, password)
       setSessionUser(user)
       if (user.must_change_password) {
         setLoggedInUser(user)
@@ -118,7 +123,7 @@ export default function LoginPage() {
         leave(user)
       }
     } catch (e: unknown) {
-      setError(loginErrorMessage(e))
+      setError(loginErrorMessage(toErrorInfo(e)))
     } finally {
       setLoading(false)
     }
@@ -154,7 +159,9 @@ export default function LoginPage() {
       // No role: leave the password form and show the message on the login screen.
       if (!leave(updated)) setShowChangePassword(false)
     } catch (e: unknown) {
-      setError(changePasswordErrorMessage(e))
+      const blocked = changePasswordBlockedMessage(toErrorInfo(e))
+      if (blocked) setAdManagedMessage(blocked)
+      else setError(changePasswordErrorMessage(e))
     } finally {
       setChangingPwd(false)
     }
@@ -174,6 +181,7 @@ export default function LoginPage() {
     setCurrentPwd('')
     setNewPwd('')
     setConfirmPwd('')
+    setAdManagedMessage(null)
     setError(null)
   }
 
@@ -184,11 +192,27 @@ export default function LoginPage() {
         <div className="bg-white rounded-xl shadow-sm border w-full max-w-sm p-8">
           <div className="text-center mb-6">
             <h1 className="text-xl font-bold text-gray-800">變更密碼</h1>
-            <p className="text-sm text-gray-500 mt-1">
-              首次登入或密碼被重設後，請先設定新密碼
-            </p>
+            {adManagedMessage === null && (
+              <p className="text-sm text-gray-500 mt-1">
+                首次登入或密碼被重設後，請先設定新密碼
+              </p>
+            )}
           </div>
 
+          {adManagedMessage !== null ? (
+            <div className="space-y-4">
+              <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                {adManagedMessage}
+              </p>
+              <button
+                type="button"
+                onClick={handleCancelChange}
+                className="w-full text-xs text-gray-500 hover:underline"
+              >
+                登出，改用其他帳號
+              </button>
+            </div>
+          ) : (
           <form onSubmit={handleChangePassword} className="space-y-4">
             {!password && (
               <div>
@@ -249,6 +273,7 @@ export default function LoginPage() {
               登出，改用其他帳號
             </button>
           </form>
+          )}
         </div>
       </div>
     )
@@ -260,7 +285,9 @@ export default function LoginPage() {
       <div className="bg-white rounded-xl shadow-sm border w-full max-w-sm p-8">
         <div className="text-center mb-8">
           <h1 className="text-xl font-bold text-gray-800">QIP 指標填報系統</h1>
-          <p className="text-sm text-gray-500 mt-1">請使用帳號登入</p>
+          <p className="text-sm text-gray-500 mt-1">
+            {ldapEnabled ? '請以員工編號與院內 AD 密碼登入' : '請使用帳號登入'}
+          </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -270,7 +297,8 @@ export default function LoginPage() {
               type="text"
               value={employeeId}
               onChange={(e) => setEmployeeId(e.target.value)}
-              placeholder="請輸入帳號"
+              placeholder={ldapEnabled ? '員工編號，如 A12345' : '請輸入帳號'}
+              maxLength={20}
               autoComplete="username"
               className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
             />

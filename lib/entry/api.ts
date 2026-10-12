@@ -6,6 +6,7 @@
 import { request, type RequestOptions } from '../http'
 import type {
   AssignmentCreatePayload,
+  AuthOptions,
   Campus,
   DeadlineSetting,
   DeadlineSettingPayload,
@@ -34,6 +35,11 @@ export async function login(employeeId: string, password: string): Promise<User>
     method: 'POST',
     json: { employee_id: employeeId, password },
   })
+}
+
+/** Public (no login): tells the login page and the account page whether AD sign-in is on. */
+export async function getAuthOptions(): Promise<AuthOptions> {
+  return apiFetch<AuthOptions>('/api/auth/options')
 }
 
 export async function logout(): Promise<void> {

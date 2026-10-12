@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { listUsers, listCampuses, createUser, updateUser, deleteUser, resetPassword } from '@/lib/entry/api'
+import { toErrorInfo } from '@/lib/auth/loginError'
+import { useAuthOptions } from '@/lib/auth/useAuthOptions'
 import type {
   User,
   UserRole,
@@ -29,6 +31,7 @@ interface IssuedPassword {
 // ─── 主元件 ─────────────────────────────────────────────────────
 
 export default function UserManagement() {
+  const { ldap_enabled: ldapEnabled } = useAuthOptions()
   const [users, setUsers] = useState<User[]>([])
   const [campuses, setCampuses] = useState<Campus[]>([])
   const [loading, setLoading] = useState(true)
@@ -95,6 +98,12 @@ export default function UserManagement() {
         reason: 'reset',
       })
     } catch (e) {
+      if (toErrorInfo(e).code === 'ldap_managed') {
+        // The row was shown as a local account (stale list): say why, and refresh so the button goes away.
+        alert('此帳號以 AD 登入，不需重設密碼；密碼問題請洽資訊室')
+        void fetchData()
+        return
+      }
       alert(e instanceof Error ? e.message : '重設失敗')
     }
   }
@@ -106,7 +115,8 @@ export default function UserManagement() {
    */
   const handleSave = (created?: UserCreateResponse) => {
     setShowDialog(false)
-    if (created?.temporary_password) {
+    // Only a response that carries the field opens the dialog (AD accounts get none).
+    if (created && typeof created.temporary_password === 'string' && created.temporary_password !== '') {
       setIssuedPassword({
         employeeId: created.employee_id,
         fullName: created.full_name,
@@ -148,7 +158,14 @@ export default function UserManagement() {
             <tbody>
               {users.map((u) => (
                 <tr key={u.id} className="border-b last:border-0 hover:bg-gray-50">
-                  <td className="py-2 pr-3 font-mono">{u.employee_id}</td>
+                  <td className="py-2 pr-3 font-mono">
+                    {u.employee_id}
+                    {u.auth_source === 'ldap' && (
+                      <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-600 font-sans">
+                        AD
+                      </span>
+                    )}
+                  </td>
                   <td className="py-2 pr-3">{u.full_name}</td>
                   <td className="py-2 pr-3">{u.campus_name ?? '-'}</td>
                   <td className="py-2 pr-3">
@@ -180,12 +197,14 @@ export default function UserManagement() {
                       >
                         {u.is_active ? '停用' : '啟用'}
                       </button>
-                      <button
-                        onClick={() => handleResetPassword(u)}
-                        className="text-purple-600 hover:underline"
-                      >
-                        重設密碼
-                      </button>
+                      {u.auth_source !== 'ldap' && (
+                        <button
+                          onClick={() => handleResetPassword(u)}
+                          className="text-purple-600 hover:underline"
+                        >
+                          重設密碼
+                        </button>
+                      )}
                       <button
                         onClick={() => handleDelete(u)}
                         className="text-red-500 hover:underline"
@@ -210,6 +229,7 @@ export default function UserManagement() {
         <UserDialog
           user={editingUser}
           campuses={campuses}
+          ldapEnabled={ldapEnabled}
           onClose={() => setShowDialog(false)}
           onSaved={handleSave}
         />
@@ -311,12 +331,14 @@ function RoleBadge({ role }: { role: UserRole }) {
 interface UserDialogProps {
   user: User | null  // null = 新增模式
   campuses: Campus[]
+  /** AD sign-in is on: the account must match the AD one, and a new account gets no password of its own. */
+  ldapEnabled: boolean
   onClose: () => void
   /** Called after a successful save; `created` is the new account (create mode only). */
   onSaved: (created?: UserCreateResponse) => void
 }
 
-function UserDialog({ user, campuses, onClose, onSaved }: UserDialogProps) {
+function UserDialog({ user, campuses, ldapEnabled, onClose, onSaved }: UserDialogProps) {
   const isEdit = !!user
 
   const [form, setForm] = useState({
@@ -361,13 +383,13 @@ function UserDialog({ user, campuses, onClose, onSaved }: UserDialogProps) {
         onSaved()
       } else {
         const payload: UserCreatePayload = {
-          employee_id: form.employee_id,
+          employee_id: form.employee_id.trim(),
           full_name: form.full_name,
           email: form.email,
           campus: form.campus,
           roles: form.roles,
-          // Blank: the server generates a temporary password and returns it.
-          password: form.password || undefined,
+          // Blank: the server generates a temporary password and returns it. With AD on there is no such field.
+          password: ldapEnabled ? undefined : form.password || undefined,
         }
         onSaved(await createUser(payload))
       }
@@ -399,6 +421,11 @@ function UserDialog({ user, campuses, onClose, onSaved }: UserDialogProps) {
               className="w-full px-2 py-1.5 text-sm border rounded disabled:bg-gray-100 disabled:text-gray-500"
               placeholder="如 A12345"
             />
+            {ldapEnabled && !isEdit && (
+              <p className="mt-1 text-[11px] text-gray-400">
+                須與 AD 帳號（員工編號）完全一致，否則登入時會顯示「尚未開通」
+              </p>
+            )}
           </div>
 
           {/* 姓名 */}
@@ -457,8 +484,13 @@ function UserDialog({ user, campuses, onClose, onSaved }: UserDialogProps) {
             </div>
           </div>
 
-          {/* 密碼（僅新增時；選填） */}
-          {!isEdit && (
+          {/* 密碼（僅新增時；選填；AD 啟用時改為說明） */}
+          {!isEdit && ldapEnabled && (
+            <p className="text-[11px] text-gray-400">
+              AD 帳號不需設定密碼，登入時使用 AD 密碼；不走 AD 的本地帳號建立後會直接顯示一組臨時密碼
+            </p>
+          )}
+          {!isEdit && !ldapEnabled && (
             <div>
               <label className="block text-xs text-gray-500 mb-1">密碼（選填）</label>
               <input
