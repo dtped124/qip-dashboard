@@ -1,4 +1,12 @@
 # HANDOFF 2026-10-12 10:45
+
+## P10 進行中：同仁上線前測試（UAT）的無 node 綠色版 — branch `feat/uat-portable`（2026-10-12 深夜）
+
+- 背景與拍板（詳見計畫檔 `C:\Users\akcho\.claude\plans\deep-chasing-thompson.md` 最上方）：院內電腦不能互相連線、node.exe 跑不起來、Python 只能嵌入式、無管理員 → 每位同仁各跑一份綠色版；前端改靜態匯出由 Django 供應；資料庫依探路包決定可攜 PostgreSQL 或 SQLite；登入用本地臨時密碼（包內不含 AD）。
+- 已完成（commit）：`93e11cc` 靜態匯出模式（`npm run build:export` → `out\` 152 頁，5.3 MB；`dynamicParams` 在非 export 保持 true）、`1127c54` 探路包腳本（`deploy/portable/build-probe.ps1`，產出 `local-data/uat/qip-probe-20261012.zip` 61 MB，本機三段全 OK）、`d46b208` Django 以 `FRONTEND_DIST_DIR` 供應 `out\`＋`requirements-portable.txt`＋`build-runtime.ps1`／`run-native.ps1`（嵌入式 Python 3.12.10＋waitress 在 Windows 原生實跑通過）。
+- 下一步：(1) 請 1–2 位同仁跑探路包回傳 `probe-result.txt` → 決定 PG 或 SQLite；(2) 使用者提供 `local-data/uat-testers.csv`；(3) 打包腳本 `deploy/portable/build-uat-portable.ps1`（組 runtime＋`out\`＋backend＋資料＋`start.bat`／`stop.bat`／README）；(4) 本機與一台院內電腦試跑；(5) `docs/UAT_GUIDE.md`；(6) 發放與回收。
+- 注意：這台開發機 8011 埠被 Docker（wslrelay）占用，原生驗證用 8012；`start.bat` 要做埠檢查。嵌入式 Python 不讀 `PYTHONPATH`，要用 `python -c` 把 `backend` 加進 `sys.path` 再 runpy（`run-native.ps1` 已示範）。`local-data/runtime-cache/` 約 1 GB 快取可重用。
+
 - 任務：qip-dashboard 上雲＋角色分流（8 phase，一 phase 一 branch）。計畫檔：`C:\Users\akcho\.claude\plans\streamed-weaving-spindle.md`；拍板決策見記憶 `project_cloud_role_rollout.md`。
 - 已完成：
   - **P1 `feat/same-origin-api`**（已合併 master `987abc5`，已推 origin）：`lib/http.ts` 統一 HTTP client、Next rewrites 代理 `/api/*`、前端全改相對路徑、Django `USE_X_FORWARDED_HOST`、TCPI POST 改讀 `request.data`。
