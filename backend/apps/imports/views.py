@@ -5,6 +5,7 @@ from django.http import JsonResponse
 from xlrd import XLRDError
 
 from apps.accounts.permissions import require_admin
+from apps.indicators.cache import bump_dashboard_cache
 from .models import ImportLog
 
 
@@ -37,7 +38,12 @@ def upload_excel(request):
         # malformed content. Only the open/parse step is guarded; nothing has
         # been saved at this point.
         return _bad_file(f"無法讀取 Excel 檔案，請確認檔案格式：{exc}")
-    log = save_import_results(parse_result, uploaded.name, len(file_bytes))
+    try:
+        log = save_import_results(parse_result, uploaded.name, len(file_bytes))
+    finally:
+        # Data points, yearly summaries and alerts are written row by row (no transaction): invalidate the cached
+        # dashboards even when the save stops half way, the rows written so far are already visible.
+        bump_dashboard_cache()
 
     return JsonResponse({
         "data": {
@@ -95,6 +101,7 @@ def correct_datapoint(request):
             )
             dp.value = float(new_value)
             dp.save(update_fields=["value", "updated_at"])
+            bump_dashboard_cache()  # the dashboard shows this value
         except DataPoint.DoesNotExist:
             return JsonResponse({"error": "DATAPOINT_NOT_FOUND"}, status=404)
 

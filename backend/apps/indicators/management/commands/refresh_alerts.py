@@ -8,6 +8,7 @@ from django.core.management.base import BaseCommand
 
 from apps.analysis.services.anomaly_detector import analyze_indicator
 from apps.analysis.services.control_chart import MonthlyDataPoint
+from apps.indicators.cache import bump_dashboard_cache
 from apps.indicators.constants import SKIP_SPC_INDICATORS
 from apps.indicators.models import Alert, DataPoint, Indicator, TCPIBenchmark
 
@@ -16,6 +17,16 @@ class Command(BaseCommand):
     help = "重新計算所有指標的異常偵測結果"
 
     def handle(self, *args, **options):
+        try:
+            total = self._refresh_all()
+        finally:
+            # Each indicator/campus is rewritten and committed on its own, so a failure half way still leaves some of
+            # them rewritten, and the dashboard's statuses come from these alerts: invalidate either way.
+            bump_dashboard_cache()
+        self.stdout.write(self.style.SUCCESS(f"已重新計算 {total} 組指標/院區的異常偵測結果"))
+
+    def _refresh_all(self) -> int:
+        """Rewrite the alerts of every active indicator and every campus with data; return how many pairs were done."""
         indicators = Indicator.objects.filter(is_active=True)
         total = 0
 
@@ -79,4 +90,4 @@ class Command(BaseCommand):
                         )
                 total += 1
 
-        self.stdout.write(self.style.SUCCESS(f"已重新計算 {total} 組指標/院區的異常偵測結果"))
+        return total

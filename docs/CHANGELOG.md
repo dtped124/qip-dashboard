@@ -1,5 +1,64 @@
 # 更新日誌 (CHANGELOG)
 
+## 雲端化 P8 — 儀表板快取（2026-10-11，`perf/dashboard-cache`）
+
+使用者最早的抱怨是「開啟太慢」。`GET /api/v1/dashboard/` 每次請求都從頭重算所有指標的所有月資料（DataPoint、Alert、YearlySummary、TCPIBenchmark 各一次查詢，再逐指標在 Python 裡彙整），Redis 早就設在 `CACHES`，整個 `backend/apps` 卻沒有任何 `cache.get`／`cache.set`。P8 讓第二次起的請求直接取自快取、資料變動時立刻失效、Redis 不通時照常運作（fail-open）。只動後端與文件，回應內容與前端都沒變。
+
+### ✨ 新功能 / 改進
+- **儀表板快取**（新 `backend/apps/indicators/cache.py`）：`dashboard_bulk` 在權限檢查之後先查快取，命中就直接回，未命中計算後存入。`dashboard_bulk` 讀的 query 參數只有 `campus`（省略時 `竹北`）、`category`、`search`，三個都進 key：`dashboard:v<版本>:<campus>:<category>:<search>`，版本號放在 `dashboard:version`（沒有過期時間），內容存 `DASHBOARD_CACHE_TTL` 秒（預設 600）。Django 會在 key 前面加 `:1:`，所以 Redis 裡看到的是 `:1:dashboard:version`、`:1:dashboard:v3:竹北::`。key 的各段會跳脫 `:`、`%`、空白與控制字元（`a:b`／`c` 與 `a`／`b:c` 不會撞成同一把），整把 key 超過 200 字元就不快取（照常計算）。回應不隨使用者而異，所以所有可讀角色共用同一份；權限檢查在讀快取之前（沒權限一律 403，不會因為快取裡有東西而放行）
+- **回應標頭 `X-Dashboard-Cache`**：`HIT`（取自快取）、`MISS`（重新計算並存入）、`BYPASS`（沒用到快取：已關閉、cache 連不上、key 太長；都是重新計算）
+- **失效靠版本號**：`bump_dashboard_cache()` 把 `dashboard:version` 加 1（key 不存在時先 `add`），舊版本的內容從此不會再被讀到，TTL 到了自己消失。兩個細節決定它會不會讀到舊資料：(1) bump 一律放在寫入**提交之後**（在 `transaction.atomic()` 裡用 `transaction.on_commit`），否則別人在 bump 與提交之間讀到的還是舊列，卻存在新版本底下；(2) 讀者**先讀版本號、再計算、存入時沿用那個版本**（`dashboard_cache_version()` 取得的值傳給 `get_`／`set_dashboard_payload(version=…)`），計算途中若有寫入，舊結果只會落在沒人再讀的舊版本 key。版本號不設過期：若會過期，它會從 1 重來，讓 bump 之前存在版本 1 的內容復活
+- **失效點**（`grep -rn bump_dashboard_cache backend/apps`）：`POST /api/v1/imports/upload/`（`try/finally`：存到一半失敗，已寫的列也看得到，所以照樣失效）、`POST /api/v1/imports/correct-datapoint/`（改了值才失效）、`PATCH /api/v1/indicators/{code}/`（`try/finally` 包住重算 alerts）、`POST /api/v1/tcpi/`（`try/finally` 包住「先刪後寫」）；管理指令 `refresh_alerts`、`seed_indicators`（兩者都是 `try/finally`：逐筆改寫、各自提交，中途丟例外時已改的也要失效）、`wipe_datapoints`（單一 transaction，提交之後才 bump；取消不失效）；Django 後台的存檔、刪除、批次刪除（`DashboardModelAdmin`：Indicator、DataPoint、YearlySummary、TCPIBenchmark、Alert，`on_commit`）。被拒絕或驗證失敗的寫入（403、400、404）不失效。逐一核對過、**不需要**的：達文西（儀表板不讀它的表）、`migrate_excel_data`（只讀 DataPoint、寫 IndicatorEntry）、填報系統（沒有任何路徑寫這五張表）、`PeerValue`（儀表板不讀）
+- **fail-open**（比照 `password_throttle.py`）：任何 cache 例外都記一筆 warning、當作沒有快取——讀不到版本號就整個請求不碰 cache（只等一次逾時）、讀 payload 失敗當未命中、存不進去回 `BYPASS`、bump 失敗只記 warning。寫入端點（匯入、PATCH、TCPI、修正）與管理指令在 cache 全壞時照常完成
+- **`DASHBOARD_CACHE_ENABLED`**（預設：有填 `REDIS_URL` 才開，由 `base.py` 的 `dashboard_cache_settings(env, redis_url)` 決定；明設 true／false 蓋過預設）：false = 不讀、不存，每次都重新計算（標頭 `BYPASS`）。**沒有 Redis 時預設關閉**：行程內記憶體每個行程一份，管理指令（`wipe_datapoints`、`refresh_alerts`、bootstrap 的 `seed_indicators` 都在獨立的行程裡跑）與其他 worker 的 bump 清不到 web 行程的那一份，單一 worker 也一樣，會一直回舊資料到 TTL 為止。bump 刻意**不受**這個開關影響：關閉期間的寫入仍讓版本號前進，之後再開不會讀到關閉前存下的舊內容
+- **`DASHBOARD_CACHE_TTL`**（預設 600，至少 1，否則 `ImproperlyConfigured`）：只在「失效通知沒送成」（例如當時 Redis 連不上）時才有作用
+- **Redis 連線逾時 `REDIS_SOCKET_TIMEOUT`**（預設 2 秒，> 0）：HANDOFF 記的待辦「Redis 卡住時 change-password 會等」。`base.py` 的 Redis cache 現在帶 `socket_connect_timeout`、`socket_timeout`；沒指定時 redis-py 的行為隨版本而異（舊版不逾時，8.x 預設 5 秒）。新的 `cache_config(env)` 函式（比照 `database_config`）組出 `CACHES["default"]`，可單獨測試；`REDIS_URL` 這個設定值保留
+- 文件與樣板：`.env.prod.example`、`backend/.env.example` 補三個變數與 `REDIS_URL` 沒填時的影響（`DASHBOARD_CACHE_ENABLED` 在樣板裡維持註解，免得複製樣板就蓋掉依 `REDIS_URL` 決定的預設）；`docs/DEPLOYMENT.md`（架構圖、§3 變數表、§5 儀表板快取、§7 Redis 逾時）、`docs/API_REFERENCE.md`（dashboard 端點的快取與標頭）、`docs/DEVELOPMENT_GUIDE.md`（新增寫入路徑時要呼叫 `bump_dashboard_cache()`）、`docs/TODO.md`
+
+### 🔧 變更 / 破壞點
+- API 的回應內容沒變，只多一個回應標頭 `X-Dashboard-Cache`
+- **沒有 `REDIS_URL` 時，儀表板快取預設關閉**（`DASHBOARD_CACHE_ENABLED` 沒設定的情況）。開發堆疊與 `.env.prod.example` 都有 `REDIS_URL`，行為不變；`backend/.env` 若沒填 `REDIS_URL`，儀表板每次都重新計算（標頭 `BYPASS`）
+- **每次容器啟動都會讓儀表板快取失效一次**：`bootstrap` 跑 `seed_indicators --only-missing`，指令結束時 bump。部署新版時這剛好當作快取重置（改了 `dashboard_bulk` 的輸出格式也不會讀到舊格式）；開發堆疊沒有這個步驟（`runserver` 自動重載不經 bootstrap），改了輸出格式要手動 bump：`docker compose exec -T api python manage.py shell -c "from apps.indicators.cache import bump_dashboard_cache; bump_dashboard_cache()"`。還原資料庫備份之後也要做
+- `REDIS_URL` 有值時，cache 的 Redis 呼叫現在最多等 `REDIS_SOCKET_TIMEOUT`（預設 2）秒。Redis 不回應（不是拒絕連線）時，每個用到 cache 的請求最多多等這麼久，然後照常處理
+- `base.py` 的 `CACHES` 改由 `cache_config(env)` 產生；`REDIS_URL` 空白時行為不變（行程內記憶體）；`DASHBOARD_CACHE_ENABLED`／`DASHBOARD_CACHE_TTL` 由 `dashboard_cache_settings(env, REDIS_URL)` 產生（都可單獨測試）
+
+### 🐛 修正（稽核後補）
+- **沒有 Redis 時快取會一直回舊資料**：行程內記憶體的快取，別的行程的 bump 清不到它——管理指令永遠是獨立行程，所以單一 worker 也一樣。預設改成「有填 `REDIS_URL` 才開」（明設 true／false 仍可蓋過）；`backend/.env.example` 原本寫「單一行程沒問題」、`docs/DEPLOYMENT.md` 的手動清快取指令也沒提到只在 Redis 下有效，一併改正；新測試：`REDIS_URL` 為空且沒設開關 → `BYPASS`、有 `REDIS_URL` → 預設啟用（六種組合）
+- **管理指令中途出錯不會失效**：`refresh_alerts`、`seed_indicators` 逐筆改寫、各自提交，原本只在最後 bump。改成 `try/finally`（`handle` 包一層，原本的內容搬進 `_refresh_all`／`_seed`），並各加一條「中途丟例外，之後儀表板必須 `MISS`」的測試
+- **測試與文件**：PATCH、`refresh_alerts`、upload 原本只斷言 `MISS`，補上回應與資料庫一致的斷言（alerts、`latest_period`）；本條目的驗證結果改為容器內的實測；`docs/DEPLOYMENT.md` §5 補記憶體估算
+
+### ⚠️ 已知限制
+- **失效通知可能漏**：bump 時 Redis 連不上，舊版本的內容在 Redis 恢復後最久還能被讀 `DASHBOARD_CACHE_TTL` 秒。Redis 的 `maxmemory-policy` 若是 `allkeys-*`，版本號可能被逐出，逐出後從 1 重來，同樣最久 TTL 秒內可能讀到逐出前的內容；用 `noeviction` 或 `volatile-*`（版本號沒有過期時間，不會被 `volatile-*` 逐出）
+- **明設 `DASHBOARD_CACHE_ENABLED=true` 卻沒有 `REDIS_URL`**：快取只存在各行程的記憶體，管理指令與其他 worker 的寫入清不到 web 行程那一份，最久 TTL 秒內回舊資料（預設已經因此關閉）。開發堆疊是單一 `runserver` 加 Redis，不受影響
+- Redis **不回應**時每個請求多等 `REDIS_SOCKET_TIMEOUT` 秒（沒有斷路器：不會因為剛失敗過就暫時不再試）；Redis 拒絕連線或 DNS 解析失敗則立刻失敗
+- key 由用戶端的 query 決定（`search` 可以是任何字串）：每個不同的值多一筆最久存活 TTL 秒的內容。以 key 長度上限（200 字元）、TTL 與內網使用限制；不是針對惡意用戶設計的防線
+- 失效後第一批同時抵達的請求會各自重算（沒有互斥鎖）；內容用 pickle 存在 Redis（Django RedisCache 的序列化方式），所以 Redis 只能內網可達（本來就是）
+- 既有行為、非本案：`correct-datapoint` 只改值、不重算 Alert。快取會立刻顯示新值，燈號仍取自舊的 Alert，直到下一次匯入或 `refresh_alerts`
+
+### 📁 修改檔案
+| 檔案 | 修改內容 |
+|------|---------|
+| `backend/apps/indicators/cache.py`（新） | 版本號、`get_`／`set_dashboard_payload`、`dashboard_cache_version`、`bump_dashboard_cache`、key 跳脫與長度上限、fail-open |
+| `backend/apps/indicators/views.py` | `dashboard_bulk` 查快取／存快取／`X-Dashboard-Cache`；PATCH 與 TCPI POST 的 `try/finally` bump |
+| `backend/apps/imports/views.py` | upload（`try/finally`）與 correct-datapoint 的 bump |
+| `backend/apps/indicators/management/commands/{refresh_alerts,wipe_datapoints,seed_indicators}.py` | 結束時 bump（`refresh_alerts`、`seed_indicators` 用 `try/finally`，內容搬進 `_refresh_all`／`_seed`） |
+| `backend/apps/indicators/admin.py` | `DashboardModelAdmin`（`on_commit` bump）；五個後台類別改繼承它 |
+| `backend/config/settings/base.py` | `cache_config(env)`、`dashboard_cache_settings(env, redis_url)`、`REDIS_SOCKET_TIMEOUT`、`DASHBOARD_CACHE_ENABLED`（預設隨 `REDIS_URL`）、`DASHBOARD_CACHE_TTL` |
+| `backend/apps/indicators/tests/test_dashboard_cache.py`（新） | 65 條：命中／未命中、key、各失效點、寫到一半失敗、被拒絕的寫入、過期讀取、fail-open、開關、TTL、逾時設定 |
+| `.env.prod.example`、`backend/.env.example` | 新變數與說明 |
+| `docs/DEPLOYMENT.md`、`docs/API_REFERENCE.md`、`docs/DEVELOPMENT_GUIDE.md`、`docs/TODO.md`、`docs/CHANGELOG.md`、`HANDOFF.md` | 見上 |
+
+### ✅ 測試與驗證
+- 新測試 65 條（`backend/apps/indicators/tests/test_dashboard_cache.py`）：第一次 `MISS` 且查了 `data_points`；第二次 `HIT` 且對 indicators、data_points、alerts、yearly_summaries、tcpi_benchmarks 五張表 **0 次查詢**（只剩 session／使用者查詢）；bump 後重新 `MISS`；campus／category／search 各自獨立；PATCH、TCPI POST、correct-datapoint、upload、`refresh_alerts`、`wipe_datapoints`、`seed_indicators`、後台存檔／刪除／批次刪除之後都是 `MISS`，而且回應與資料庫一致（對 alerts、`peer_value`、`latest_value`／`latest_period`、`total` 有斷言；用空白活頁簿的上傳只斷言 `MISS`）；各寫入路徑與兩個逐筆改寫的管理指令「寫到一半失敗」仍失效；被拒絕的寫入（403／400／404）不失效；`cache.get`／`add`／`set`／`incr`／全部壞掉時回 200 與 `BYPASS`、寫入端點照常完成、記 warning；開關（含有沒有 `REDIS_URL` 的預設）、TTL、版本號不過期、Redis 逾時設定、`DASHBOARD_CACHE_TTL < 1` 拒絕啟動
+- 突變檢查：逐一拿掉每個 bump、`version=` 的沿用、`timeout=None`、跳脫、型別檢查、長度上限、例外處理、逾時選項、TTL 驗證、兩個指令的 `try/finally`、開關的預設（共 35 種），每一種都至少讓一條測試失敗
+- **容器內（開發堆疊：PostgreSQL 16 + Redis 7）**：
+  - `docker compose exec -T api pytest apps/indicators/tests -q -p no:cacheprovider`：65 passed；全套 `pytest -q`：780 passed、23 skipped、1 failed——既有的 `test_control_chart.py::test_binomial_rare_event_returns_imr`，非本案
+  - `manage.py check`：no issues；`makemigrations --check --dry-run`：No changes detected
+  - 開發堆疊實測（Django test client、唯讀 GET、包在回滾的 transaction 裡；`/api/v1/dashboard/?campus=竹北`，payload 272 KB）：第一次 `MISS` 1498 ms（含冷啟動）、第二次與第三次 `HIT` 9.8 ms 與 11.4 ms；關閉快取（`BYPASS`，也就是改動前的行為）穩定在 23–24 ms，`HIT` 約快 2 倍多。Redis 裡有 `:1:dashboard:v2:竹北::`（TTL 598 秒）與 `:1:dashboard:version`
+  - 專案外的實驗（Python 3.14、redis-py 8.1.0）：fakeredis 讓 Django 真正的 `RedisCache` 後端跑過一遍——版本號是 Redis 裡的整數、沒有 TTL、`INCR` 正常，舊版本 key 在 bump 後不被讀，逐出版本號後 bump 會重建，伺服器中斷時全部 fail-open；把 `REDIS_URL` 指到不會回應的位址（10.255.255.1），`cache.get` 在 2.1 秒後以 `TimeoutError` 失敗，`dashboard_cache_version()` 在 2.0 秒後回 `None`，`bump_dashboard_cache()` 在 2.0 秒後返回、不丟例外。沒做：實機停掉 redis 容器再打 dashboard（以單元測試與這個實驗涵蓋）
+
+---
+
 ## 雲端化 P7 — 平台無關部署（2026-10-11，`feat/cloud-ready-deploy`）
 
 雲端平台還沒決定，所以只交付「平台無關」的部分：兩個映像、一份 compose 樣板、啟動程序、健康檢查與 production 設定。TLS、網域、每 IP 限流、備份是平台的事，列在 `docs/DEPLOYMENT.md` §7。開發堆疊（根目錄 `docker-compose.yml`、`start.bat`）的流程不變，但它和正式堆疊現在明確分開（見下面「與開發堆疊分開」）。

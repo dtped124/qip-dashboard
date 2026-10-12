@@ -8,7 +8,7 @@ Endpoints:
 - GET  /api/v1/indicators/<code>/alerts/      — 異常警示
 - GET  /api/v1/indicators/<code>/summaries/   — 年度摘要
 - GET  /api/v1/indicators/<code>/analysis/    — 即時分析（管制圖+異常偵測）
-- GET  /api/v1/dashboard/?campus=竹北          — 儀表板批次載入（所有指標+資料+狀態）
+- GET  /api/v1/dashboard/?campus=竹北          — 儀表板批次載入（所有指標+資料+狀態；有快取，見 cache.py）
 - POST /api/v1/tcpi/                          — TCPI 標竿批次匯入
 - GET  /api/v1/tcpi/                          — TCPI 標竿列表
 """
@@ -17,6 +17,12 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from apps.accounts.permissions import CanViewDashboard, ReadersGetAdminWrite, require_admin
+from .cache import (
+    bump_dashboard_cache,
+    dashboard_cache_version,
+    get_dashboard_payload,
+    set_dashboard_payload,
+)
 from .models import Indicator, DataPoint, YearlySummary, Alert, TCPIBenchmark
 from .serializers import (
     IndicatorSerializer, DataPointSerializer,
@@ -81,7 +87,11 @@ def indicator_detail(request, code: str):
         ind.save(update_fields=["target_mode", "target_value", "updated_at"])
 
         # 更新後立刻刷新該指標的 alerts，讓儀表板即時反映
-        _refresh_indicator_alerts(ind)
+        try:
+            _refresh_indicator_alerts(ind)
+        finally:
+            # The rewritten alerts change the dashboard, also when the rewrite stops half way.
+            bump_dashboard_cache()
 
     return Response(IndicatorSerializer(ind).data)
 
@@ -298,10 +308,24 @@ def dashboard_bulk(request):
     - 年均值
     - 同儕/標竿值
     - 趨勢方向
+
+    The answer is cached (apps/indicators/cache.py) under campus, category, search and a version number; every write
+    that can change the dashboard calls bump_dashboard_cache(), and DASHBOARD_CACHE_TTL seconds is the safety net.
+    Response header X-Dashboard-Cache: HIT (served from the cache), MISS (computed and stored) or BYPASS (the cache
+    took no part: switched off, unreachable, or the key would be too long; computed and not stored).
     """
     campus = request.GET.get("campus", "竹北")
     category = request.GET.get("category", "")
     search = request.GET.get("search", "")
+
+    # The permission class has already let the caller in, and the answer is the same for every reader: it depends only
+    # on these parameters and on the database. The version is read before the data is, so a write that lands while
+    # this request computes cannot get its older result filed under the newer version.
+    key_parts = (campus, category, search)
+    version = dashboard_cache_version()
+    cached = get_dashboard_payload(key_parts, version=version)
+    if cached is not None:
+        return _with_cache_state(Response(cached), "HIT")
 
     # Load all active indicators for this campus
     all_indicators = Indicator.objects.filter(is_active=True).order_by("code")
@@ -529,7 +553,15 @@ def dashboard_bulk(request):
             "monthly_alerts": monthly_alerts,
         })
 
-    return Response({"data": result, "total": len(result), "campus": campus})
+    payload = {"data": result, "total": len(result), "campus": campus}
+    stored = set_dashboard_payload(key_parts, payload, version=version)
+    return _with_cache_state(Response(payload), "MISS" if stored else "BYPASS")
+
+
+def _with_cache_state(response: Response, state: str) -> Response:
+    """Tag a dashboard response with how the cache took part: HIT, MISS or BYPASS (see ``dashboard_bulk``)."""
+    response["X-Dashboard-Cache"] = state
+    return response
 
 
 def _get_peer_value(code: str, campus: str) -> float | None:
@@ -627,24 +659,29 @@ def tcpi_benchmarks(request):
     # Get valid indicator codes
     valid_codes = set(Indicator.objects.values_list("code", flat=True))
 
-    # Clear existing TCPI data
-    TCPIBenchmark.objects.all().delete()
+    try:
+        # Clear existing TCPI data
+        TCPIBenchmark.objects.all().delete()
 
-    # Insert new
-    saved = 0
-    for item in items:
-        code = item.get("indicatorCode") or item.get("indicator_code")
-        if not code or code not in valid_codes:
-            continue
-        TCPIBenchmark.objects.create(
-            indicator_id=code,
-            tcpi_name=item.get("tcpiName", item.get("tcpi_name", "")),
-            year=item.get("year", 0),
-            medical_center=item.get("medicalCenter", item.get("medical_center")),
-            regional_hospital=item.get("regionalHospital", item.get("regional_hospital")),
-            district_hospital=item.get("districtHospital", item.get("district_hospital")),
-        )
-        saved += 1
+        # Insert new
+        saved = 0
+        for item in items:
+            code = item.get("indicatorCode") or item.get("indicator_code")
+            if not code or code not in valid_codes:
+                continue
+            TCPIBenchmark.objects.create(
+                indicator_id=code,
+                tcpi_name=item.get("tcpiName", item.get("tcpi_name", "")),
+                year=item.get("year", 0),
+                medical_center=item.get("medicalCenter", item.get("medical_center")),
+                regional_hospital=item.get("regionalHospital", item.get("regional_hospital")),
+                district_hospital=item.get("districtHospital", item.get("district_hospital")),
+            )
+            saved += 1
+    finally:
+        # The benchmarks feed the dashboard's peer values. Delete-then-insert is not atomic, so a failure half way
+        # still leaves different rows behind: invalidate either way.
+        bump_dashboard_cache()
 
     return Response({"saved": saved, "total": len(items)})
 

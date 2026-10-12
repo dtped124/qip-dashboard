@@ -150,7 +150,9 @@
 
 ### GET /api/v1/dashboard/?campus=竹北
 一次載入儀表板所需所有資料（所有指標 + 最新值 + sparkline + 狀態 + 標竿 + 趨勢）
-- **Query**：`campus`（必填）、`category`、`search`
+- **Query**：`campus`（省略時為 `竹北`）、`category`、`search`
+- **伺服器端快取**（`backend/apps/indicators/cache.py`，P8）：算好的回應存在 Django cache（Redis），key 由 `campus`、`category`、`search` 與版本號組成；第二次起同樣的請求直接取自快取，不查 DataPoint／Alert 等表。權限檢查在讀快取之前（沒權限一律 403），所有可讀角色共用同一份。會改變儀表板的寫入——Excel 匯入、`correct-datapoint`、`PATCH /indicators/{code}/`（目標值）、`POST /tcpi/`、Django 後台編輯、`seed_indicators`／`refresh_alerts`／`wipe_datapoints`——完成後立刻使它失效；`DASHBOARD_CACHE_TTL`（預設 600 秒）是保底。Redis 連不上時照常重新計算並記 warning，不回 500
+- **回應標頭 `X-Dashboard-Cache`**：`HIT`（取自快取）、`MISS`（重新計算並存入快取）、`BYPASS`（沒用到快取：`DASHBOARD_CACHE_ENABLED=false`——沒設定時，沒有 `REDIS_URL` 也是 false——、cache 連不上，或 `campus`／`category`／`search` 組成的 key 超過長度上限而不存；都是重新計算）
 ```json
 {
   "data": [

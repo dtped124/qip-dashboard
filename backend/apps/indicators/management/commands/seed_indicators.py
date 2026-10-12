@@ -8,6 +8,7 @@ Usage:
 """
 from django.core.management.base import BaseCommand
 
+from apps.indicators.cache import bump_dashboard_cache
 from apps.indicators.constants import INDICATOR_META
 from apps.indicators.models import Indicator
 
@@ -29,6 +30,16 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        try:
+            self._seed(options)
+        finally:
+            # Indicators decide which rows the dashboard lists (--clear also deletes their data through the cascade),
+            # and they are written one by one: a failure half way still leaves different ones behind, so invalidate
+            # either way. This runs on every container start too (bootstrap), which doubles as a cache reset on each
+            # deployment.
+            bump_dashboard_cache()
+
+    def _seed(self, options):
         only_missing = options["only_missing"]
 
         if options["clear"]:
