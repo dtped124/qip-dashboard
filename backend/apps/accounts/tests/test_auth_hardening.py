@@ -472,7 +472,13 @@ def test_unlock_account_hands_axes_the_folded_name(monkeypatch):
 
 # ── Password gate (must_change_password) ─────────────────────────
 
-AUTH_ROUTES ={"/api/auth/login", "/api/auth/me", "/api/auth/logout", "/api/auth/change-password"}
+AUTH_ROUTES = {
+    "/api/auth/login",
+    "/api/auth/options",
+    "/api/auth/me",
+    "/api/auth/logout",
+    "/api/auth/change-password",
+}
 
 
 def test_every_other_route_asks_for_the_password_change(make_user, client_for):

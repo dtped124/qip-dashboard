@@ -148,6 +148,49 @@ class TestBootstrap:
         assert steps[-2:] == ["seed_admin", "release"]
         assert "not-printed-anywhere" not in out.getvalue()
 
+    def _ad_line(self, out):
+        lines = [line for line in out.getvalue().splitlines() if "AD 驗證" in line]
+        assert len(lines) == 1
+        return lines[0]
+
+    def test_says_that_ad_sign_in_is_off(self, steps, monkeypatch):
+        monkeypatch.delenv("SEED_ADMIN_PASSWORD", raising=False)
+        out = io.StringIO()
+        call_command("bootstrap", stdout=out)
+        assert self._ad_line(out) == "[bootstrap] AD 驗證：未啟用（僅本地密碼）"
+
+    def test_says_that_ad_sign_in_is_on_and_never_prints_the_bind_values(self, steps, monkeypatch, settings):
+        monkeypatch.delenv("SEED_ADMIN_PASSWORD", raising=False)
+        settings.LDAP = {
+            "ENABLED": True, "SERVER_IP": "ad.example.test", "PORT": 3890,
+            "BIND_USER": "CN=svc-made-up,DC=example,DC=test", "BIND_PASS": "bind-made-up-secret",
+            "BASE_DN": "DC=example,DC=test", "TIMEOUT": 3.0, "AUTO_CREATE": False,
+            "DEFAULT_ROLE": "viewer", "LOCAL_ONLY_ACCOUNTS": frozenset({"breakglass", "admin"}),
+        }
+        out = io.StringIO()
+        call_command("bootstrap", stdout=out)
+        line = self._ad_line(out)
+        for part in ("AD 驗證：啟用", "ad.example.test:3890", "base DC=example,DC=test", "逾時 3 秒",
+                     "本地帳號：admin, breakglass"):
+            assert part in line
+        assert "svc-made-up" not in out.getvalue()
+        assert "bind-made-up-secret" not in out.getvalue()
+        # the line comes before the first numbered step
+        assert out.getvalue().index("AD 驗證") < out.getvalue().index("seed_admin skipped")
+
+    def test_warns_in_the_status_line_when_nobody_may_skip_ad(self, steps, monkeypatch, settings):
+        monkeypatch.delenv("SEED_ADMIN_PASSWORD", raising=False)
+        settings.LDAP = {
+            "ENABLED": True, "SERVER_IP": "ad.example.test", "PORT": 389, "BIND_USER": "u", "BIND_PASS": "p",
+            "BASE_DN": "DC=example,DC=test", "TIMEOUT": 2.5, "AUTO_CREATE": False,
+            "DEFAULT_ROLE": "viewer", "LOCAL_ONLY_ACCOUNTS": frozenset(),
+        }
+        out = io.StringIO()
+        call_command("bootstrap", stdout=out)
+        line = self._ad_line(out)
+        assert "本地帳號：無，所有帳號含管理者都必須通過 AD" in line
+        assert "逾時 2.5 秒" in line
+
     def test_releases_the_lock_when_a_step_fails(self, steps, monkeypatch):
         monkeypatch.delenv("SEED_ADMIN_PASSWORD", raising=False)
         steps.fail_on = "migrate"

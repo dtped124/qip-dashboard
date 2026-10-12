@@ -320,6 +320,9 @@ LDAP = ldap_settings(env)
 AUTHENTICATION_BACKENDS = [
     # Must be first: it refuses a locked-out login before any real backend checks the password.
     "axes.backends.AxesStandaloneBackend",
+    # Always listed; never add/remove by LDAP_ENABLED (removing it logs out every AD session, whose
+    # BACKEND_SESSION_KEY names this class). It hands over to ModelBackend when AD is off or the account is local-only.
+    "apps.accounts.backends.LdapBackend",
     "django.contrib.auth.backends.ModelBackend",
 ]
 
