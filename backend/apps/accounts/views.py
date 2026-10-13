@@ -4,6 +4,7 @@
 """
 import functools
 
+from django.conf import settings
 from django.contrib.auth import login, logout, update_session_auth_hash
 from django.http import JsonResponse
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -13,6 +14,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.accounts import password_throttle
+from apps.accounts.backends import is_local_account, session_auth_method
 from apps.accounts.lockout import unlock_account
 from apps.accounts.models import User, UserRole
 from apps.accounts.passwords import generate_temporary_password
@@ -20,6 +22,8 @@ from apps.accounts.permissions import IsAdmin
 from apps.accounts.serializers import (
     ChangePasswordSerializer,
     CurrentUserSerializer,
+    LdapManagedAccount,
+    LdapManagedPassword,
     LoginSerializer,
     UserCreateSerializer,
     UserSerializer,
@@ -58,7 +62,16 @@ def auth_login(request):
     user = serializer.validated_data["user"]
     # The same HttpRequest object django-axes tracked during authenticate().
     login(request._request, user)
-    return Response(CurrentUserSerializer(user).data)
+    return Response(CurrentUserSerializer(user, context={"request": request}).data)
+
+
+@no_store
+@api_view(["GET"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def auth_options(request):
+    """GET /api/auth/options — what the login page needs to know before anyone is signed in (public)."""
+    return Response({"ldap_enabled": bool(settings.LDAP["ENABLED"])})
 
 
 @api_view(["POST"])
@@ -80,7 +93,7 @@ def auth_me(request):
 
     ``roles`` are the effective ones: a Django superuser always includes ``admin`` (login answers alike).
     """
-    return Response(CurrentUserSerializer(request.user).data)
+    return Response(CurrentUserSerializer(request.user, context={"request": request}).data)
 
 
 # ── 帳號管理（系統管理員）────────────────────────────────────────
@@ -171,6 +184,10 @@ def reset_password(request, pk):
     except User.DoesNotExist:
         return Response({"detail": "找不到使用者"}, status=status.HTTP_404_NOT_FOUND)
 
+    if settings.LDAP["ENABLED"] and not is_local_account(user.employee_id):
+        # Refuse before anything is generated or saved: AD owns this account's password.
+        raise LdapManagedAccount()
+
     temporary_password = generate_temporary_password(user)
     user.set_password(temporary_password)
     user.must_change_password = True
@@ -192,6 +209,9 @@ def change_password(request):
     do not prove the current password, the next one answers 429 ``too_many_attempts`` - even with
     the right password - until ``PASSWORD_CHANGE_COOLOFF_MINUTES`` have passed.
     """
+    if session_auth_method(request) == "ldap":
+        # Before the throttle: nothing is being guessed here, the AD password is not ours to change.
+        raise LdapManagedPassword()
     user = request.user
     password_throttle.register_attempt(user)  # raises the 429 before the body is even read
     serializer = ChangePasswordSerializer(data=request.data, context={"user": user})

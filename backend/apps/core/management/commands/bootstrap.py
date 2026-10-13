@@ -12,6 +12,8 @@ every start of every container:
   6. create the admin account, only when SEED_ADMIN_PASSWORD is set (an existing admin is left alone)
   7. release the lock
 
+Right after the schema-name check it also prints one unnumbered line: whether AD sign-in is on (and where it points).
+
 Usage:
   python manage.py bootstrap
 """
@@ -48,6 +50,7 @@ class Command(BaseCommand):
                 "(lowercase letters, digits and underscore; it must not start with a digit)"
             )
 
+        self._report_ad_sign_in()
         self._wait_for_database()
 
         # The lock lives on a connection of its own: it is held until that session ends, whatever
@@ -66,6 +69,18 @@ class Command(BaseCommand):
     def _step(self, message):
         self.stdout.write(f"[bootstrap] {message}")
         self.stdout.flush()
+
+    def _report_ad_sign_in(self):
+        """One unnumbered line saying whether sign-in goes through AD. Never prints the bind account or its password."""
+        conf = settings.LDAP
+        if not conf["ENABLED"]:
+            self._step("AD 驗證：未啟用（僅本地密碼）")
+            return
+        local_only = ", ".join(sorted(conf["LOCAL_ONLY_ACCOUNTS"])) or "無，所有帳號含管理者都必須通過 AD"
+        self._step(
+            f"AD 驗證：啟用（{conf['SERVER_IP']}:{conf['PORT']}，base {conf['BASE_DN']}，"
+            f"逾時 {conf['TIMEOUT']:g} 秒，本地帳號：{local_only}）"
+        )
 
     def _run(self, command, **kwargs):
         call_command(command, stdout=self.stdout, stderr=self.stderr, **kwargs)

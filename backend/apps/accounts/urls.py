@@ -2,8 +2,14 @@ from django.urls import path
 from django.views.decorators.csrf import csrf_exempt
 
 from apps.accounts.views import (
-    auth_login, auth_logout, auth_me, change_password,
-    user_detail, user_list, reset_password,
+    auth_login,
+    auth_logout,
+    auth_me,
+    auth_options,
+    change_password,
+    reset_password,
+    user_detail,
+    user_list,
 )
 
 urlpatterns = [
@@ -11,6 +17,7 @@ urlpatterns = [
     path("login", csrf_exempt(auth_login), name="auth-login"),
     path("logout", auth_logout, name="auth-logout"),
     path("me", auth_me, name="auth-me"),
+    path("options", auth_options, name="auth-options"),
     path("change-password", change_password, name="auth-change-password"),
 ]
 

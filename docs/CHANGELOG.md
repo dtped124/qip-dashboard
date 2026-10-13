@@ -1,5 +1,76 @@
 # 更新日誌 (CHANGELOG)
 
+## 雲端化 P9 — AD／LDAP 登入（2026-10-12，`feat/ldap-auth`）
+
+院內同仁要用 AD 帳密登入，比照醫中五大任務追蹤系統（2026-08 起已在正式機使用 AD 兩階段驗證）。規則的核心是使用者拍板的一句話：**「有通過 AD 才能進到下一步，由本地帳號決定權限；沒通過 AD 就什麼都沒有，連本地都不能進。」**——AD 是唯一的認證來源，系統裡的本地帳號只決定角色與院區，**帳號開通權仍在品管中心**。`LDAP_ENABLED` 預設 false，交付時 AD 一律關閉，由資訊室上線時自行啟用；關閉時行為與 P8 完全相同（沒有 User 欄位、沒有 migration）。
+
+### ✨ 新功能 / 改進
+- **AD 兩階段驗證**（新 `backend/apps/accounts/ldap.py`，純 Python 的 `ldap3`）：服務帳號 bind 搜尋員編 → 取得使用者 DN → 以該 DN 與輸入的密碼 bind。結果分 `success`／`wrong_password`／`not_found`／`error`／`ambiguous`。員編只收 `[A-Za-z0-9._-]` 且 1–20 字，空密碼不連線。連線與等待回覆都有逾時（`LDAP_TIMEOUT`，預設 3 秒；最壞等待約 5 倍），通訊類失敗另寫 30 秒斷路器，期間直接判定連不上
+- **`LdapBackend`**（新 `backend/apps/accounts/backends.py`）：`AUTHENTICATION_BACKENDS` 固定三個 `[Axes, LdapBackend, ModelBackend]`（不依開關動態增減）。AD 成功且系統有此帳號 → 登入，角色來自本地帳號；系統無此帳號 → 403 `account_not_provisioned`「AD 驗證成功，但系統尚未開通此帳號，請洽品管中心」；AD 密碼錯、查無此人、帳號停用 → 400「帳號或密碼錯誤」並計入鎖定；AD 連不上 → 503 `ldap_unavailable`「目前無法連線到院內 AD 驗證服務，請稍後再試或洽資訊室」，**不計入鎖定**。本地密碼只對 `LDAP_LOCAL_ONLY_ACCOUNTS` 內的帳號有效（預設空 = 純 AD，連 `admin` 都登不進；要保留緊急管理者就填 `admin`）
+- **十個設定鍵**（鍵名與醫中系統相同，全走環境變數）：`LDAP_ENABLED`、`LDAP_SERVER_IP`、`LDAP_PORT`（389）、`LDAP_BIND_USER`、`LDAP_BIND_PASS`、`LDAP_BASE_DN`、`LDAP_TIMEOUT`（3）、`LDAP_AUTO_CREATE`（false）、`LDAP_DEFAULT_ROLE`（viewer，只准 viewer／reporter）、`LDAP_LOCAL_ONLY_ACCOUNTS`。啟用時前四個必填，缺了容器拒絕啟動且錯誤訊息只印鍵名
+- **AD 成功時只補不覆寫**：個人欄位（email）只補空缺；AD 姓名與系統姓名不一致只寫 log（`ad_name_mismatch`，同一人 7 天一次），不動 `full_name`、院區、角色。帳號旗標「須改密碼」為 true 時，AD 登入自動清旗標並作廢臨時密碼（AD 使用者不會被要求改密碼）
+- **API**：新 `GET /api/auth/options`（免登入）→ `{"ldap_enabled": bool}`；所有使用者物件多 `auth_source`（`"ldap"`／`"local"`，由設定推得，不是欄位），登入與 `/me` 另有 `auth_method`；`POST /api/auth/change-password` 對 AD 登入的 session 回 403 `ldap_managed`「您的密碼由院內 AD 管理，如需變更請洽資訊室」；`POST /api/admin/users` 對 AD 帳號不產生臨時密碼（回應無 `temporary_password`，帶了 `password` 回 400 `ldap_managed`）；`POST /api/admin/users/{id}/reset-password` 對 AD 帳號回 400 `ldap_managed`「此帳號以 AD 登入，不需重設密碼；密碼問題請洽資訊室」；建帳號的 `employee_id` 改為不分大小寫檢查重複
+- **維運**：啟動 log 多一行 `[bootstrap] AD 驗證：啟用（主機:埠，base …，逾時 N 秒，本地帳號：…）` 或 `AD 驗證：未啟用（僅本地密碼）`（不印 bind 帳密）；新指令 `python manage.py ldap_check`（服務帳號 bind）、`--user <員編>`（查某人）、`--user <員編> --login`（互動輸入該員編的 AD 密碼測完整登入）、`--audit`（列出本地啟用帳號在 AD 查無者，管理者標 `[ADMIN]`，以及 AD 姓名與系統姓名不一致者；清單為空時 seed `admin` 一定列出並標註、不算警告，其他管理者查無 → 結尾 WARNING、結束碼 2，只有非管理者查無或姓名不一致 → 結束碼 0）；新指令 `python manage.py unlock_account <員編>`（不分大小寫解除 axes 鎖定並清改密碼嘗試計數，取代對含大寫員編無效的 `axes_reset_username`）。容器內：`docker compose -f docker-compose.prod.yml --env-file .env.prod exec api python manage.py ldap_check …`（正式；看 log 用 `… logs api`）、`docker compose exec -T api …`（開發；`--login` 不加 `-T`）。啟用 AD 後，啟用前以本地密碼建立的 session 會在下一個請求被登出（清單內帳號與 AD 登入的 session 不受影響）
+- **前端**：登入頁依 `/api/auth/options` 顯示「請以員工編號與院內 AD 密碼登入」，送出前去頭尾空白，403／503 與斷線顯示明確訊息（抽成純函式 `lib/auth/loginError.ts` 並有單元測試）；帳號管理頁對 AD 帳號顯示 `AD` 小標、隱藏「重設密碼」，AD 啟用時新增對話框不出現密碼欄、建立成功且回應有 `temporary_password` 才彈臨時密碼視窗
+- **文件與樣板**：`.env.prod.example` 新增第五組「AD／LDAP 登入」、`backend/.env.example` 新段；`docs/DEPLOYMENT.md` 新增 §4.1「啟用 AD 登入的順序」（六步與責任分工）、§4.2 已知限制、變數表、狀態行、疑難排解；`docs/ACCEPTANCE_GUIDE.md` 新增「AD 登入」一節；`docs/API_REFERENCE.md`、`docs/USER_MANUAL.md`、`docs/DEVELOPMENT_GUIDE.md`、`HANDOFF.md`
+
+### 🔧 變更 / 破壞點
+- `LDAP_ENABLED` 沒設或為 false 時**行為不變**：LdapBackend 立即讓位給 ModelBackend，不連 AD、不讀其他 `LDAP_*`。沒有 migration、沒有 User 新欄位
+- **啟用 AD 之前必須先做**：品管中心用 `admin` 建好自己的 AD 員編管理者帳號（帳號＝員工編號，與 AD 的 `sAMAccountName` 一致，角色管理員）。順序寫錯，啟用後系統沒有任何管理者能登入。完整六步見 `docs/DEPLOYMENT.md` §4.1
+- **啟用後 `admin` 預設登不進去**（`LDAP_LOCAL_ONLY_ACCOUNTS` 為空 = 純 AD）。要保留不依賴 AD 的緊急管理者就把 `admin` 填進清單
+- 登入鎖定的帳號計數改為**不分大小寫**（`lockout.py` 的 `axes_username` 與 `unlock_account` 都 casefold）：`a123` 錯 3 次加 `A123` 錯 2 次會在第 5 次鎖定；LDAP 關閉時也適用
+- 新增相依套件 `ldap3>=2.9.1,<3`（純 Python，只依賴 pyasn1）：既有環境要重建 api 映像
+- 帳號管理頁：AD 啟用時新增對話框沒有密碼欄；AD 帳號沒有「重設密碼」
+
+### 🔐 安全性
+- **AD 是唯一的門**：非清單帳號在 AD 失敗時**不退回本地密碼**（AD 查無、密碼錯、連不上都一樣）；「清單」是明確填入的例外，預設為空。停用帳號先擋，不打 AD
+- **axes 計數改不分大小寫**：AD 與登入都不分大小寫，若鎖定仍分大小寫，換個大小寫就能繞過 5 次上限
+- **LDAP filter 跳脫**：員編先過白名單 `^[A-Za-z0-9._-]{1,20}$`，再用 `escape_filter_chars` 組 filter，`*)(` 之類字串不可能改變查詢
+- **密碼不入 log**：AD 密碼與服務帳號密碼不出現在 log、錯誤訊息、啟動狀態行或 `ldap_check` 輸出（`@sensitive_variables`；設定驗證的錯誤只列鍵名）；`LDAP_BIND_PASS` 用 `os.environ` 原樣讀取，`$` 開頭也不被當變數；但 Docker Compose 會先替換 `.env.prod` 裡的 `$xxx`，所以含 `$` 的值要用單引號整個包起來（已實測：密碼開頭是 `$` 又沒加引號 → 容器拒絕啟動；`$` 在中間 → bind 失敗、全員 503）
+- **pytest 永不連真 AD**：根 `conftest.py` 的 autouse fixture 關閉 `LDAP` 設定並把 `ldap3.Connection` 換成會丟例外的 stub；測試一律用假 AD
+- 使用者 bind 階段的未知例外一律當驗證失敗（fail-closed）；連線與使用者階段的例外不會留下半開連線
+
+### ⚠️ 已知限制
+- **AD 當機時只有 `LDAP_LOCAL_ONLY_ACCOUNTS` 裡的帳號能登入**；清單為空則無人能登入，直到 AD 恢復或把 `LDAP_ENABLED` 關掉（「AD 是唯一的門」的代價，使用者已知）
+- 每個非清單帳號登入都先打 AD；AD 不可達時最壞多等約 5×`LDAP_TIMEOUT` 秒，之後斷路器 30 秒內立即回 503
+- 未開通者與 AD 查無者的失敗都進 axes 計數，5 次後鎖定 5 分鐘
+- 透過登入頁猜 AD 密碼會累計到 AD 自己的鎖定原則；axes 限速但無法完全避免
+- 預設 389 明文 bind（與醫中相同）；LDAPS 需資訊室提供 CA 憑證後另做
+- LDAP 開啟時，Django 後台 `/admin/password_change/` 不受 `ldap_managed` 閘門限制（僅 `is_staff`）
+- Django 後台 `/admin/login/` 在 AD 連不上時會計入鎖定次數（API 登入不會）
+- 登入頁可被用來累計 AD 自己的鎖定次數；axes 每帳號 5 次／5 分鐘只能限速，建議資訊室在邊緣（反向代理）對 `/api/auth/login` 做每 IP 限流
+- 帳號比對 iexact、axes 計數 casefold；`employee_id` 欄位本身仍大小寫敏感（既有行為）
+- 關閉 LDAP 回退時，AD 使用者的本地密碼若曾被作廢（首次 AD 登入時旗標為 true 者），需管理者重設
+
+### 📁 修改檔案
+| 檔案 | 修改內容 |
+|------|---------|
+| `backend/apps/accounts/{ldap,backends,signals}.py`（新） | `ldap.py`：AD 兩階段驗證、filter 跳脫、斷路器、`LdapResult`、`LdapUnavailable`；`backends.py`：`LdapBackend`、`is_local_account`、`session_auth_method`、AUTO_CREATE；`signals.py`：登入方式 log（`user_logged_in`） |
+| `backend/apps/accounts/management/commands/ldap_check.py`（新） | `ldap_check`：服務帳號 bind、`--user`、`--login`、`--audit` |
+| `backend/apps/accounts/{serializers,views,urls,lockout,apps}.py` | 503／403 例外、`auth_source`／`auth_method`、建帳號與重設密碼的 AD 規則（含不分大小寫重複檢查）、`change_password` 的 `ldap_managed` 閘門、`GET /api/auth/options`、axes 計數 casefold、`ready()` 連接 receiver |
+| `backend/config/settings/base.py` | `ldap_settings(env)`、`LDAP`、`AUTHENTICATION_BACKENDS` 第二位插入 `LdapBackend` |
+| `backend/conftest.py` | autouse `ldap_off`：pytest 不連真 AD |
+| `backend/apps/core/management/commands/bootstrap.py` | 啟動時的 AD 驗證狀態行 |
+| `backend/requirements.txt` | `ldap3>=2.9.1,<3` |
+| `backend/apps/accounts/tests/`、`backend/apps/core/tests/` | AD 客戶端、登入矩陣、`ldap_check`、設定、元測試（新路由登記）、鎖定大小寫 |
+| `lib/auth/{loginError,useAuthOptions}.ts` | 登入錯誤訊息純函式（含單元測試）、讀取 `/api/auth/options` |
+| `app/entry/login/page.tsx` | AD 副標、帳號去頭尾空白、403／503／斷線訊息 |
+| `components/entry/UserManagement.tsx` | `AD` 小標、隱藏「重設密碼」、AD 啟用時新增對話框無密碼欄 |
+| `lib/entry/{api,types}.ts` | `getAuthOptions()`、`User.auth_source`／`auth_method` |
+| `.env.prod.example`、`backend/.env.example` | LDAP 十個鍵與說明（預設關閉） |
+| `docs/DEPLOYMENT.md`、`docs/API_REFERENCE.md`、`docs/ACCEPTANCE_GUIDE.md`、`docs/USER_MANUAL.md`、`docs/DEVELOPMENT_GUIDE.md`、`docs/CHANGELOG.md`、`HANDOFF.md` | 見上 |
+
+### ✅ 測試與驗證
+- 自動化（全用假 AD，`ldap3.Connection` 一律 mock）：設定驗證、AD 客戶端各狀態（含白名單、跳脫、兩個逾時、unbind 例外、斷路器、log 不含密碼）、登入矩陣（AD 成功／失敗／連不上／未開通／停用、清單內外帳號、AUTO_CREATE、鎖定與大小寫）、帳號 API（AD 帳號建立與重設）、`ldap_check` 四種模式、bootstrap 狀態行。數字：後端容器 `pytest` 991 passed／23 skipped／1 既有失敗（`test_binomial_rare_event_returns_imr`，非本案），本 phase 新增 211 個後端測試
+- 迴歸：`LDAP_ENABLED` 未設時既有測試全數維持基準；`ruff`、`manage.py check`、`makemigrations --check --dry-run` 的最終結果見 PR
+- 前端：`npm run test:unit` 152 個全綠（新增 `lib/auth/loginError.test.ts`）；`npm run lint`、`npx tsc --noEmit` 的最終結果見 PR
+- 變異檢查（Opus 稽核）：3 個變異——AD 拒絕時退回本地密碼、AD 連不上改計入鎖定、使用者 bind 例外 fail-open——各被 2–4 個測試抓到
+- 瀏覽器實測（假 AD 設定）：LDAP 關閉時畫面與以前完全相同；開啟時登入頁顯示 AD 文案、帳號管理頁有 `AD` 標示並隱藏「重設密碼」、新增對話框無密碼欄；非清單帳號在 AD 連不上時看到 503 訊息，且不計入鎖定
+- 真 AD 實測：**待 2026-10-13 中午後於院內 Wi-Fi 進行**（密碼全程由使用者輸入）——`ldap_check` 三種模式、未開通 → 開通 → 登入、錯誤密碼 5 次鎖定、`admin` 本地密碼被擋 → 填入清單後可登入、關閉 LDAP 回到原樣
+- 後端修正後的最終數字見 PR
+
+---
+
 ## 雲端化 P8 — 儀表板快取（2026-10-11，`perf/dashboard-cache`）
 
 使用者最早的抱怨是「開啟太慢」。`GET /api/v1/dashboard/` 每次請求都從頭重算所有指標的所有月資料（DataPoint、Alert、YearlySummary、TCPIBenchmark 各一次查詢，再逐指標在 Python 裡彙整），Redis 早就設在 `CACHES`，整個 `backend/apps` 卻沒有任何 `cache.get`／`cache.set`。P8 讓第二次起的請求直接取自快取、資料變動時立刻失效、Redis 不通時照常運作（fail-open）。只動後端與文件，回應內容與前端都沒變。
@@ -284,7 +355,7 @@
 ## 雲端化 P3 — 登入防護與密碼政策（2026-10-11，`feat/auth-hardening`，PR #9）
 
 ### ✨ 新功能 / 改進
-- **登入鎖定**（django-axes 8.3.1）：同一帳號連續失敗 5 次鎖 5 分鐘（`AXES_FAILURE_LIMIT`、`AXES_COOLOFF_MINUTES`）；從第 5 次失敗起回 429 `locked`，訊息中的分鐘數取自設定；鎖定期間的嘗試不延長鎖定；登入成功會重置；重設密碼、`seed_admin --reset`、`manage.py axes_reset_username` 都能解鎖；Django 後台登入共用同一個計數
+- **登入鎖定**（django-axes 8.3.1）：同一帳號連續失敗 5 次鎖 5 分鐘（`AXES_FAILURE_LIMIT`、`AXES_COOLOFF_MINUTES`）；從第 5 次失敗起回 429 `locked`，訊息中的分鐘數取自設定；鎖定期間的嘗試不延長鎖定；登入成功會重置；重設密碼、`seed_admin --reset`、`manage.py unlock_account`（P9 起；取代 `axes_reset_username`）都能解鎖；Django 後台登入共用同一個計數
 - **密碼政策**（`AUTH_PASSWORD_VALIDATORS`）：至少 10 字元、不得為常見密碼、不得全為數字、不得與帳號／姓名／Email 相似；套用於變更密碼、建立帳號、`seed_admin` 與 Django 後台
 - **重設密碼改為隨機臨時密碼**（至少 12 字元，含大小寫、數字、符號）：只在回應中出現一次、不寫 log、不存明文；該使用者所有現有 session 隨之失效
 - **強制改密碼**：`must_change_password` 為 true 時，除 `me` / `logout` / `change-password` 外所有 API 一律 403 `password_change_required`（DRF 與純 Django view 同一個閘門）；變更密碼必須帶 `current_password`
