@@ -93,7 +93,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy\portable\build-runtim
 * 最後一步用**嵌入式** python 實際 `import` 全部套件（django、rest_framework、psycopg、numpy、Levenshtein、ldap3、whitenoise、waitress、axes、environ、openpyxl、xlrd、corsheaders、redis），任何一個失敗腳本就失敗。
 * `backend\requirements-portable.txt` 是 `requirements.txt` 的複本：去掉 `gunicorn`（Windows 跑不了），加 `waitress`、`typing_extensions`
   （`pip download` 用建置機的 Python 3.14 判斷環境標記，會漏掉 `python_version<"3.13"` 的相依）。改 `requirements.txt` 時要同步。
-  `ldap3` 為 AD 登入（Phase 9 分支）預先放進去，這個分支的程式碼還沒 import 它。
 * 嵌入式 Python 因為有 `python312._pth`，**不讀 `PYTHONPATH`、也不把目前目錄或 `manage.py` 所在目錄放進 `sys.path`**。
   所以直接 `python manage.py ...` 會找不到 `config`；`run-native.ps1` 一律用 `python -c`（先 `sys.path.insert(0, backend)` 再 `runpy` 執行 manage.py／waitress）。
   `pytest` 不受影響（`conftest.py` 會把 `backend\` 放進路徑）。
@@ -124,7 +123,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy\portable\run-native.p
 ```powershell
 # 前置：build-runtime.ps1 做過一次（runtime-full）、快取裡有 PostgreSQL zip、開發堆疊的 postgres 容器在跑（只做 pg_dump）
 powershell -NoProfile -ExecutionPolicy Bypass -File deploy\portable\build-uat-portable.ps1 `
-    [-TestersCsv local-data\uat-testers.csv] [-AdminPassword <字串>] [-DropDavinciCases] [-OutDir local-data\uat] [-Clean]
+    [-TestersCsv local-data\uat-testers.csv] [-AdminPassword <字串>] [-DropDavinciCases] [-OutDir local-data\uat] [-Clean] [-Revision r2]
 # 本機驗收（從 zip 解開實跑，不是從 staging）：
 python deploy\portable\verify-uat-portable.py --zip local-data\uat\qip-uat-portable-<日期>.zip `
     --passwords local-data\uat\uat-testers-passwords-<日期>.md --work <空的暫存資料夾> --expect-port-fallback
@@ -133,16 +132,17 @@ python deploy\portable\verify-uat-portable.py --zip local-data\uat\qip-uat-porta
 | 檔案 | 用途 |
 |---|---|
 | `build-uat-portable.ps1` | 打包腳本（PowerShell 5.1、純 ASCII、可重跑；staging 在 `local-data\runtime-cache\stage-uat\`，每次重建） |
-| `launcher.py` | 進包成 `app\launcher.py`：`serve`（waitress，寫 `data\django.pid`／`django.port`，log 進 `logs\django.log`）、`manage`（把 `app\backend` 放進 `sys.path` 再跑 manage.py）、`health`（輪詢 `/healthz`） |
+| `launcher.py` | 進包成 `app\launcher.py`：`serve`（waitress，寫 `data\django.pid`／`django.port`，log 進 `logs\django.log`）、`manage`（把 `app\backend` 放進 `sys.path` 再跑 manage.py）、`health`（輪詢 `/healthz`）、`stop`（只結束執行檔在本包 `runtime\` 底下的 PID：先看 `data\django.pid`，沒有就看 8011–8015 的監聽者；不用 `/T`） |
 | `package\start.bat`、`package\stop.bat` | 進包的雙擊啟動／停止（純 ASCII，打包時轉成 CRLF）。`QIP_NO_BROWSER=1` 可略過自動開瀏覽器（自動驗收用） |
 | `package\README-template.txt` | 同仁說明的範本（繁中），打包時填入示範帳號密碼與 BUILD-INFO，存成 UTF-8 BOM |
 | `verify-uat-portable.py` | 本機驗收：解 zip → `cmd /c start.bat` → HTTP／tasklist／netstat 檢查 → 停止 → 再啟動 → 模擬當機後復原 |
 
-* 資料庫：腳本在 staging 內 `initdb`（scram-sha-256、隨機密碼）→ 起一個暫時伺服器 → `docker compose exec postgres pg_dump -Fc --schema=qip`（唯讀）→ `pg_restore` →
-  `migrate --check` → `uat_seed_testers`（建同仁帳號／指派、重設 demo 密碼、**scrub** 其餘帳號的密碼、清 axes 與 session）→ `seed_admin --reset` → `VACUUM` → 停止。
-  包內密碼雜湊只有：CSV 同仁、demo、admin。
+* 資料庫：腳本在 staging 內 `initdb` 一個**暫時叢集**（scram-sha-256、隨機密碼）→ 起伺服器 → `docker compose exec postgres pg_dump -Fc --schema=qip`（唯讀）→ `pg_restore` →
+  `migrate --check` → `uat_seed_testers`（建同仁帳號／指派、重設 demo 密碼、**scrub** 其餘帳號的密碼、清 axes 與 session）→ `seed_admin --reset` → `pg_dump` → 停止並刪除暫時叢集
+  （它的 `pg_wal` 留有 scrub 前的資料）→ 包內 `data\pgdata` 另外**全新 `initdb`** → `pg_restore` 清理後的 dump → `VACUUM` → 停止。
+  包內密碼雜湊只有：CSV 同仁、`uat_*` 角色帳號、demo、admin（另有包內資料庫角色 `qip` 的 SCRAM）。
 * 密碼檔 `uat-testers-passwords-<日期>.md` 在 `-OutDir`，**不進包**；腳本只印「已產生」。
 * 打包時 PostgreSQL 若遇 5499 被占用會改用 5498 建置，但包內 `.env` 永遠是 5499（`start.bat` 以 5499 啟動；被占用就提示後結束）。
 * 嵌入式 runtime 會移除 pytest／pytest_django／_pytest／pluggy／iniconfig／pygments 與第三方套件的 `tests` 資料夾；後端複製時排除
-  `venv`、所有 `tests`、`.env*`、`conftest.py`、`staticfiles`（改由 `collectstatic` 重產）、`__pycache__`。
-* 包內檢查：zip 前掃描 staging，若出現 Excel／CSV、`.env.prod*`、`venv`、`tests`、pytest、`postmaster.pid` 就中止。
+  `venv`、所有 `tests`、`.env*`、`conftest.py`、`staticfiles`（改由 `collectstatic` 重產）、`__pycache__`、`.pytest_cache`／`.ruff_cache`／`.mypy_cache`。
+* 包內檢查：zip 前掃描 staging，若出現 Excel／CSV、`.env.prod*`、`venv`、`tests`、pytest、`.pytest_cache`／`.ruff_cache`／`.mypy_cache`、`postmaster.pid` 就中止。

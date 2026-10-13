@@ -26,7 +26,7 @@ qip-uat-portable-<日期>\
   * 示範帳號 `demo_a`／`demo_b`／`demo_r`（密碼每次打包重設，同樣寫在 README）；
   * `admin`：**只給你本人**，密碼只在密碼檔，首次登入須改密碼；
   * 若有提供名單：每位同仁一個個人帳號（臨時密碼，首次登入須改，**不在包內**）。
-  * 開發資料庫裡其他帳號（真實員編）的密碼雜湊已全部作廢（`set_unusable_password`），axes 紀錄與 session 已清空。
+  * 開發資料庫裡其他帳號（真實員編）的密碼雜湊已全部作廢（`set_unusable_password`），axes 紀錄與 session 已清空；作廢在暫時叢集做完後，再 `pg_dump` 到**全新 initdb** 的叢集當包內資料庫，所以包內 `pg_wal` 也沒有舊雜湊。2026-10-13 r2 包實測：掃描解壓後 `data\pgdata` 全目錄（含 `pg_wal`），Django 密碼雜湊 10 個＝可登入帳號 10 個，另 1 個 SCRAM 是包內資料庫角色 `qip` 自己的；與開發資料庫的雜湊沒有任何相同值。
 
 ### 角色帳號與指派（竹北院區）
 
@@ -38,7 +38,8 @@ qip-uat-portable-<日期>\
 | `uat_reporter_both` | 填報者＋檢視者 | HA01-01 分子與分母、HA01-02 分子與分母 |
 | `uat_reviewer` | 審核者＋檢視者 | — |
 | `uat_admin` | 系統管理員 | — |
-| `demo_a`／`demo_b` | 填報者 | 竹北 HA03-01／02／03 的分子（甲）、分母（乙） |
+| `demo_a` | 填報者＋檢視者 | 竹北 HA03-01 分子、HA03-02 分子與分母、HA03-03 分子 |
+| `demo_b` | 填報者 | 竹北 HA03-01 分母、HA03-03 分母 |
 | `demo_r` | 審核者＋檢視者 | — |
 
 > 送審規則：同一院區、同一面向**所有已指派的指標**都填好才能送審。HA03 面向還有 HA03-03（分子 `demo_a`、分母 `demo_b`），所以走 HA03 流程要換 `demo_a`／`demo_b` 補填；走 HA01（`uat_reporter_both`）最單純。
@@ -78,7 +79,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy\portable\build-uat-po
   * `local-data\uat\qip-uat-portable-<日期>.zip`（＋`.sha256`）
   * `local-data\uat\uat-testers-passwords-<日期>.md` ← **密碼檔，不在包內**，含 admin、角色帳號、示範帳號、個人帳號
   * `local-data\runtime-cache\stage-uat\` ← 組裝資料夾，保留供比對；下次打包會重建，`-Clean` 可在完成後刪除
-* `-DropDavinciCases`：清空 `davinci_cases`（達文西逐人次，含遮罩病歷號）；月彙總 `davinci_indicator_values` 與匯入紀錄保留。預設關＝完整複製資料。**院內資料外流風險高時請開。**
+* `-DropDavinciCases`：清空 `davinci_cases`（達文西逐人次，含遮罩病歷號）；月彙總 `davinci_indicator_values` 與匯入紀錄保留。預設關＝**逐案保留**（完整複製資料）：README 的共用審核／管理帳號（`uat_reviewer`、`uat_admin`、`demo_r`）可檢視並匯出逐案；使用者已接受此風險，**測完務必刪除資料夾**。院內資料外流風險高時請開。
 * 包內不含：Excel／CSV、`.env.prod*`、`tests`、`venv`、pytest、`local-data`。腳本在壓縮前會掃描，發現就中止。
 
 ## 4. 發放
@@ -118,19 +119,19 @@ python deploy\portable\verify-uat-portable.py --zip local-data\uat\qip-uat-porta
 | 2 | 不需事先裝任何東西（Python 嵌入式自帶 runtime；PostgreSQL 的 DLL 在 `bin\`） | Python 與 numpy／psycopg 自帶 VC 執行階段；**PostgreSQL 依賴系統的 `msvcp140.dll`／`vcruntime140.dll`，未隨包附帶**（探路包在院內電腦已證明可跑） | |
 | 3 | 只綁 127.0.0.1（不觸發防火牆彈窗） | `netstat` 的 LISTENING 只有 `127.0.0.1:<Django 埠>` 與 `127.0.0.1:5499`；Windows 防火牆彈窗未驗證（需在無管理員的電腦上看） | |
 | 4 | 相對路徑；資料與 log 都在資料夾內 | 解在任意資料夾（含路徑很長的暫存資料夾）即可跑；資料、log、pid 都在包內 | |
-| 5 | 第一次啟動不下載、不 `pip install`；雙擊到登入頁 < 60 秒 | `start.bat` 到 `/healthz` 200：第一次約 36 秒（沒有 `__pycache__`，第一次要編譯 .pyc）；之後約 8–12 秒 | |
-| 6 | 雙擊 `start.bat` 即可；`stop.bat` 停止；移除＝刪資料夾 | `cmd /c start.bat`／`stop.bat`（pause 以 Enter 餵過）exit 0；`stop.bat` 約 1 秒 | |
+| 5 | 第一次啟動不下載、不 `pip install`；雙擊到登入頁 < 60 秒 | `start.bat` 到 `/healthz` 200：第一次約 23 秒（沒有 `__pycache__`，第一次要編譯 .pyc）；之後約 9–15 秒 | |
+| 6 | 雙擊 `start.bat` 即可；`stop.bat` 停止；移除＝刪資料夾 | `cmd /c start.bat`／`stop.bat`（pause 以 Enter 餵過）exit 0；`stop.bat` 約 0.5–0.6 秒，只結束執行檔在本包 `runtime\` 底下的 python（殘留的 `django.pid` 指向別的程式時不動它） | |
 | 7 | 重複啟動無殘留程序；異常關機後能自我復原（`postmaster.pid` 殘留） | 三次啟動／停止後 `tasklist` 無包內 python／postgres、無 LISTENING、無 `postmaster.pid`；重複雙擊只重開瀏覽器；強制終止後再啟動會移除殘留 `postmaster.pid` 並恢復 | |
 
-### 本機驗收結果（`verify-uat-portable.py`，2026-10-13，51 項全過）
+### 本機驗收結果（`verify-uat-portable.py`，2026-10-13 `qip-uat-portable-20261013-r2.zip`，51 項全過）
 
 | 項目 | 結果 | 秒數 |
 |---|---|---|
-| 解 zip（10217 檔） | OK | 18 |
+| 解 zip（10216 檔） | OK | 23 |
 | 本機 8011 被 Docker 占用 → 自動改 8012 | 發生了（訊息「port 8011 is in use … using port 8012」，`/healthz` 在 8012 回 200） | — |
-| start.bat → /healthz 200（第一次／第二次／第三次） | 200 | 35.9／9.7／9.2 |
+| start.bat → /healthz 200（第一次／第二次／第三次） | 200 | 23.0／8.8／11.9 |
 | `/`、`/entry/login/`、`/_next/static/*.js`、`/static/admin/css/base.css` | 200 | — |
-| `/api/auth/options` | 404（此分支未含 AD 登入，PR #16 合併後應回 `ldap_enabled=false`） | — |
+| `/api/auth/options` | 200，`ldap_enabled=false`（驗收腳本要求兩者都成立） | — |
 | `/api/auth/me`（未登入） | 403 | — |
 | admin 登入 → `/api/v1/dashboard/` | 200 且 `must_change_password=true` → dashboard 403 `password_change_required`（閘門在） | — |
 | 角色帳號 6 個＋示範帳號 3 個登入 | 200，`must_change_password=false`，角色正確 | — |
@@ -139,10 +140,12 @@ python deploy\portable\verify-uat-portable.py --zip local-data\uat\qip-uat-porta
 | 流程 HA01：`uat_reporter_both` 暫存 → 送審 → `uat_reviewer` 核准 | 200／200／200 | — |
 | 流程 HA03（115/11）：分子帳號、分母帳號暫存 → 送審被擋（400 `incomplete`，HA03-03 未填）→ `demo_a`／`demo_b` 補填 → 送審 → 退回 → 重送 → 核准 | 全部符合 | — |
 | 密碼錯 5 次 | 第 5 次 429，之後正確密碼也 429；重啟後仍鎖定 | — |
-| 個人帳號首次登入改密碼（需用 `-TestersCsv` 打包；已用範例名單驗證一次） | 200 → 改密碼 200 → 儀表板 200；重啟後新密碼仍有效 | — |
-| stop.bat 後 | 無包內 python／postgres、8012／5499 無 LISTENING、無 `postmaster.pid` | 0.6–1.0 |
+| 個人帳號首次登入改密碼（需用 `-TestersCsv` 打包；r2 未附名單，沿用前一版以範例名單驗證的結果） | 200 → 改密碼 200 → 儀表板 200；重啟後新密碼仍有效 | — |
+| stop.bat 後 | 無包內 python／postgres、8012／5499 無 LISTENING、無 `postmaster.pid` | 0.5–0.6 |
+| stop.bat 遇到殘留 `django.pid` 指向無關程式（`ping -n 600 127.0.0.1` 的 PID） | 訊息「belongs to another program (PING.EXE): left alone」，ping 仍存活，pid 檔被清掉；沒有 pid 檔時 8011 上 Docker 的程式同樣不動 | — |
+| 包內 `data\pgdata` 全目錄（含 `pg_wal`）的密碼雜湊 | Django 雜湊 10 個＝可登入帳號 10 個；SCRAM 1 個（包內資料庫角色 `qip`）；與開發資料庫相同的雜湊：無 | — |
 | 再啟動後資料 | 帳號數相同、已核准報表仍在 | — |
-| 強制終止後再啟動 | 殘留 `postmaster.pid` 被移除，登入頁 200 | 16 |
+| 強制終止後再啟動 | 殘留 `postmaster.pid` 被移除，登入頁 200 | 14.9 |
 
 ## 9. 只在品管中心自己的電腦上：用綠色版做真 AD 登入驗證（選用）
 
