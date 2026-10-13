@@ -393,7 +393,7 @@ python -m http.server 3011 --directory out   # 臨時檢查頁面是否存在（
 
 - **`/api` 必須同源由後端供應**：`lib/http.ts` 以相對路徑 `/api/...` 呼叫（`NEXT_PUBLIC_API_URL` 為空），匯出版沒有轉發，供應 `out/` 的 Django 必須同時提供 `/api`。用 `http.server` 開只能看頁面，打 API 會 404。
 - **`.next/` 與 `out/` 共用建置快取**：`build:export` 之後要跑 `next start`，需重新 `npm run build`。兩者互不影響各自的行為，但不要在跑著 `next dev`／`next start` 的同一個目錄裡建置。
-- **動態路由參數清單**在 `lib/export/staticParams.ts`（純常數），由各動態段資料夾的 `layout.tsx` 的 `generateStaticParams` 讀取（client page 不能自己 export 它）：
+- **動態路由參數清單**在 `lib/export/staticParams.ts`（純常數），由各動態段資料夾的 `layout.export.tsx` 的 `generateStaticParams` 讀取（client page 不能自己 export 它）：
 
   | 路由 | 參數來源 | 頁數 |
   |---|---|---|
@@ -405,7 +405,7 @@ python -m http.server 3011 --directory out   # 臨時檢查頁面是否存在（
   | `/davinci/[code]` | `backend/apps/davinci/constants.py` `DAVINCI_INDICATORS`（DV01–DV07） | 7 |
 
 - **同步規則**：後端 seed 變動（新增院區、面向、指標、達文西指標）時，要手動同步 `lib/export/staticParams.ts` 再重新 `build:export`；漏列的指標在綠色版沒有頁面（開了是 404）。透過介面新增、不在 seed 內的指標同樣沒有頁面。
-- 這些 `layout.tsx` 在一般 build 也會被載入，但只有 `NEXT_OUTPUT=export` 時才回傳參數清單並設 `dynamicParams = false`；一般 build 回傳空陣列、`dynamicParams` 維持 `true`，清單外的路徑（例如 `/indicators/ZZ99-99`）仍照常即時產生。
+- 這些 `layout.export.tsx` 只在匯出模式被當成 layout（`next.config.mjs` 在 `NEXT_OUTPUT=export` 時才把 `export.tsx` 加進 `pageExtensions`）；一般 build 完全不載入它們，路由表與沒有綠色版時相同（動態路由都是 ƒ），清單外的路徑（例如 `/indicators/ZZ99-99`）仍照常即時產生。
 
 ---
 

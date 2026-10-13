@@ -25,7 +25,11 @@ const nextConfig = {
   output: isExport ? 'export' : process.env.NEXT_OUTPUT === 'standalone' ? 'standalone' : undefined,
   // Export only: "/x/index.html" layout so any static file server (Django, python -m http.server) resolves "/x/";
   // next/image has no optimizer without a server.
-  ...(isExport ? { trailingSlash: true, images: { unoptimized: true } } : {}),
+  // Export only: "layout.export.tsx" files (generateStaticParams for the dynamic routes) are picked up as layouts
+  // only through the extra "export.tsx" page extension; regular builds ignore them, so their route table is unchanged.
+  ...(isExport
+    ? { trailingSlash: true, images: { unoptimized: true }, pageExtensions: ['export.tsx', 'tsx', 'ts', 'jsx', 'js'] }
+    : {}),
   // Most Django routes end with "/". By default Next 308-redirects "/x/" to "/x"
   // before any rewrite runs, which would strip the slash Django expects. Turn
   // that redirect off and keep BOTH rewrite rules below.

@@ -200,9 +200,9 @@ def run1(pkg, passwords, expect_fallback):
     record("run1: GET /", status == 200 and b"<html" in body.lower(), f"HTTP {status}, {len(body)} bytes")
     status, body = client.request("GET", "/entry/login/")
     record("run1: GET /entry/login/", status == 200, f"HTTP {status}")
-    status, _ = client.request("GET", "/api/auth/options")
-    record("run1: GET /api/auth/options", status in (200, 404), f"HTTP {status} (404 = LDAP branch not in this build; "
-           "200 would carry ldap_enabled)")
+    status, data = client.json("GET", "/api/auth/options")
+    record("run1: GET /api/auth/options (no AD in the package)", status == 200 and data.get("ldap_enabled") is False,
+           f"HTTP {status}, ldap_enabled={data.get('ldap_enabled')}")
     status, _ = client.request("GET", "/api/auth/me")
     record("run1: GET /api/auth/me anonymous", status in (401, 403), f"HTTP {status}")
     static_js = next((pkg.root / "app" / "web" / "out" / "_next" / "static").rglob("*.js"))

@@ -6,33 +6,20 @@ title QIP UAT - stop
 set "SYS=%SystemRoot%\System32"
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
+set "PY=%ROOT%\runtime\python\python.exe"
+set "LAUNCHER=%ROOT%\app\launcher.py"
 set "PGBIN=%ROOT%\runtime\pgsql\bin"
 set "PGDATA=%ROOT%\data\pgdata"
 
 echo.
 echo ===== QIP UAT portable package - stop =====
 
-rem ---- web server: by pid file, else by the listening port ------------------------------------------------
-if exist "%ROOT%\data\django.pid" (
-  set "DJPID="
-  set /p DJPID=<"%ROOT%\data\django.pid"
-  if defined DJPID (
-    "%SYS%\taskkill.exe" /PID !DJPID! /T /F >nul 2>&1
-    if not errorlevel 1 (echo Web server stopped ^(pid !DJPID!^).) else (echo Web server was not running ^(pid !DJPID!^).)
-  )
-  del "%ROOT%\data\django.pid" >nul 2>&1
-  del "%ROOT%\data\django.port" >nul 2>&1
+rem ---- web server: only a python.exe from THIS folder's runtime\ is ended (launcher.py stop checks the
+rem      executable path of the pid in data\django.pid, or of the listener on ports 8011-8015 when there is no pid file)
+if exist "%PY%" (
+  "%PY%" -X utf8 "%LAUNCHER%" stop
 ) else (
-  echo No pid file; looking for a python.exe that listens on ports 8011-8015 ...
-  for %%P in (8011 8012 8013 8014 8015) do (
-    for /f "tokens=5" %%A in ('"%SYS%\netstat.exe" -ano ^| "%SYS%\findstr.exe" /R /C:":%%P .*LISTENING"') do (
-      "%SYS%\tasklist.exe" /FI "PID eq %%A" /NH 2>nul | "%SYS%\find.exe" /I "python.exe" >nul
-      if not errorlevel 1 (
-        "%SYS%\taskkill.exe" /PID %%A /T /F >nul 2>&1
-        echo Stopped python.exe pid %%A that listened on port %%P.
-      )
-    )
-  )
+  echo ERROR: runtime\python\python.exe not found; the web server was not stopped.
 )
 
 rem ---- database ---------------------------------------------------------------------------------------------

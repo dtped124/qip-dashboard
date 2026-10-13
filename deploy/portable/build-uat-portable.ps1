@@ -12,8 +12,10 @@
     1. disk space check, commit/date for BUILD-INFO.txt
     2. stage runtime\python (from runtime-full, test packages removed), runtime\pgsql, app\web\out, app\backend, ...
     3. backend static files (collectstatic)
-    4. database: initdb (random password) -> start -> restore the dev schema -> migrate --check -> uat_seed_testers
-       (testers, demo reset, scrub) -> seed_admin --reset -> optional DavinciCase drop -> VACUUM -> stop
+    4. database: initdb a scratch cluster (random password) -> start -> restore the dev schema -> migrate --check ->
+       uat_seed_testers (testers, demo reset, scrub) -> seed_admin --reset -> optional DavinciCase drop -> pg_dump ->
+       stop and delete the scratch cluster (its WAL holds the unscrubbed rows) -> initdb the package cluster ->
+       pg_restore the scrubbed dump -> VACUUM -> stop
     5. app\backend\.env (random SECRET_KEY, the cluster password; no AD, no development secrets)
     6. start.bat, stop.bat, launcher.py, README-*.txt, BUILD-INFO.txt
     7. verify the staged tree is clean (no Excel, .env.prod, tests, venv, pytest), zip, SHA256
@@ -41,6 +43,9 @@
   Delete the staging folder after the zip is written.
 .PARAMETER MinFreeGB
   Stop when the drive has less free space than this (default 15).
+.PARAMETER Revision
+  Optional suffix for a second build on the same day, e.g. r2 -> qip-uat-portable-<yyyymmdd>-r2.zip and
+  uat-testers-passwords-<yyyymmdd>-r2.md (an earlier package of that day is not overwritten).
 #>
 [CmdletBinding()]
 param(
@@ -52,7 +57,8 @@ param(
   [string]$MainTree,
   [switch]$RebuildFrontend,
   [switch]$Clean,
-  [int]$MinFreeGB = 15
+  [int]$MinFreeGB = 15,
+  [ValidatePattern('^[A-Za-z0-9]*$')][string]$Revision
 )
 
 $ErrorActionPreference = 'Stop'
@@ -217,6 +223,7 @@ if (-not $TestersCsv) { $TestersCsv = Join-Path $localData 'uat-testers.csv' }
 New-Item -ItemType Directory -Force -Path $CacheDir, $OutDir | Out-Null
 
 $stamp     = Get-Date -Format 'yyyyMMdd'
+if ($Revision) { $stamp = "$stamp-$Revision" }
 $pkgName   = "qip-uat-portable-$stamp"
 $stageRoot = Join-Path $CacheDir 'stage-uat'
 $pack      = Join-Path $stageRoot $pkgName
@@ -353,7 +360,7 @@ Copy-Tree $outDirWeb $webOut @('/XF', '*.xls', '*.xlsx', '*.xlsm', '*.csv', '*.m
 # backend (no venv / tests / env files / caches / staticfiles; collectstatic regenerates the latter)
 $backendSrc = Join-Path $repoRoot 'backend'
 $backend = Join-Path $pack 'app\backend'
-Copy-Tree $backendSrc $backend @('/XD', 'venv', '.venv', 'tests', '__pycache__', 'staticfiles', 'media', '.pytest_cache',
+Copy-Tree $backendSrc $backend @('/XD', 'venv', '.venv', 'tests', '__pycache__', 'staticfiles', 'media', '.pytest_cache', '.ruff_cache', '.mypy_cache',
                                   '/XF', '.env', '.env.*', '*.pyc', 'conftest.py', 'Dockerfile', '.dockerignore', 'entrypoint.sh',
                                   'requirements.txt', 'requirements-dev.txt', 'init-db.sql', '.gitignore', 'pyproject.toml')
 Copy-Item -LiteralPath (Join-Path $here 'launcher.py') -Destination (Join-Path $pack 'app\launcher.py')
@@ -415,13 +422,12 @@ Write-Host "  collectstatic: $((($r.Out -split "`n") | Where-Object { $_.Trim() 
 Write-Step "PostgreSQL cluster"
 $pgBin   = Join-Path $pgDir 'bin'
 $pgData  = Join-Path $pack 'data\pgdata'
+# The development dump (real password hashes) is restored and scrubbed in a scratch cluster outside the package.
+# Its WAL keeps the pre-scrub rows, so the package gets a second, freshly initdb'ed cluster that only ever sees a
+# pg_dump of the scrubbed database.
+$pgBuildData = Join-Path $stageRoot 'pgdata-build'
 $buildPgLog = Join-Path $stageRoot 'build-postgres.log'
 $pwFile  = Join-Path $stageRoot 'pg.pw'
-[IO.File]::WriteAllText($pwFile, $dbPassword, (New-Object Text.ASCIIEncoding))
-try {
-  $code = Invoke-Native (Join-Path $pgBin 'initdb.exe') @('-D', $pgData, '-U', 'qip', '-A', 'scram-sha-256', '--pwfile', $pwFile, '-E', 'UTF8', '--no-locale') $null
-  if ($code -ne 0) { throw "initdb failed ($code)" }
-} finally { if (Test-Path -LiteralPath $pwFile) { Remove-Item -LiteralPath $pwFile -Force } }
 
 # modest settings for a colleague's PC; the port in the file is the package's runtime port
 $conf = @"
@@ -434,7 +440,15 @@ shared_buffers = 64MB
 min_wal_size = 32MB
 max_wal_size = 128MB
 "@
-[IO.File]::AppendAllText((Join-Path $pgData 'postgresql.conf'), $conf, (New-Object Text.ASCIIEncoding))
+function New-Cluster([string]$dir) {
+  [IO.File]::WriteAllText($pwFile, $dbPassword, (New-Object Text.ASCIIEncoding))
+  try {
+    $code = Invoke-Native (Join-Path $pgBin 'initdb.exe') @('-D', $dir, '-U', 'qip', '-A', 'scram-sha-256', '--pwfile', $pwFile, '-E', 'UTF8', '--no-locale') $null
+    if ($code -ne 0) { throw "initdb failed ($code)" }
+  } finally { if (Test-Path -LiteralPath $pwFile) { Remove-Item -LiteralPath $pwFile -Force } }
+  [IO.File]::AppendAllText((Join-Path $dir 'postgresql.conf'), $conf, (New-Object Text.ASCIIEncoding))
+}
+New-Cluster $pgBuildData
 
 # the build-time server may use another port when 5499 is busy; the .env always says 5499
 $buildPort = $PgRunPort
@@ -447,8 +461,9 @@ $pgEnv = @{ 'PGPASSWORD' = $dbPassword; 'PGCLIENTENCODING' = 'UTF8' }
 $buildDbUrl = "postgresql://qip:$dbPassword@127.0.0.1:$buildPort/qip"
 $pgStarted = $false
 $dumpFile = Join-Path $stageRoot 'dev.dump'
+$cleanDump = Join-Path $stageRoot 'scrubbed.dump'
 try {
-  $code = Invoke-Native $pgctl @('-D', $pgData, '-o', "-p $buildPort -h 127.0.0.1", '-l', $buildPgLog, '-w', '-t', '90', 'start') $null
+  $code = Invoke-Native $pgctl @('-D', $pgBuildData, '-o', "-p $buildPort -h 127.0.0.1", '-l', $buildPgLog, '-w', '-t', '90', 'start') $null
   if ($code -ne 0) { throw "pg_ctl start failed ($code); see $buildPgLog" }
   $pgStarted = $true
 
@@ -523,6 +538,32 @@ try {
   $nAssign = Invoke-Psql 'qip' 'SELECT count(*) FROM qip.entry_assignments'
   Write-Host "  accounts in the package: $nUsers ($nUsable can log in with a password), assignments: $nAssign"
 
+  Write-Step "pg_dump of the scrubbed database"
+  $r = Invoke-Capture (Join-Path $pgBin 'pg_dump.exe') @('-h', '127.0.0.1', '-p', "$buildPort", '-U', 'qip', '-d', 'qip', '--no-owner', '--no-privileges', '-Fc', '-f', $cleanDump) $pgEnv $null
+  if ($r.Code -ne 0) { throw "pg_dump of the scrubbed database failed: $($r.Err)" }
+} finally {
+  if ($pgStarted) {
+    $code = Invoke-Native $pgctl @('-D', $pgBuildData, '-m', 'fast', '-w', '-t', '90', 'stop') $null
+    if ($code -ne 0) { Write-Host "WARNING: pg_ctl stop returned $code" -ForegroundColor Red }
+  }
+  if (Test-Path -LiteralPath $dumpFile) { Remove-Item -LiteralPath $dumpFile -Force }
+}
+if (Test-Path -LiteralPath (Join-Path $pgBuildData 'postmaster.pid')) { throw "postmaster.pid is still in $pgBuildData after pg_ctl stop" }
+Remove-Item -LiteralPath $pgBuildData -Recurse -Force   # its WAL holds the unscrubbed rows
+
+Write-Step "Fresh package cluster from the scrubbed dump"
+New-Cluster $pgData
+$pgStarted = $false
+try {
+  $code = Invoke-Native $pgctl @('-D', $pgData, '-o', "-p $buildPort -h 127.0.0.1", '-l', $buildPgLog, '-w', '-t', '90', 'start') $null
+  if ($code -ne 0) { throw "pg_ctl start failed ($code); see $buildPgLog" }
+  $pgStarted = $true
+  Invoke-Psql 'postgres' "CREATE DATABASE qip ENCODING 'UTF8' TEMPLATE template0" | Out-Null
+  $restore = Invoke-Capture (Join-Path $pgBin 'pg_restore.exe') @('-h', '127.0.0.1', '-p', "$buildPort", '-U', 'qip', '-d', 'qip', '--no-owner', '--no-privileges', '--exit-on-error', $cleanDump) $pgEnv $null
+  if ($restore.Code -ne 0) { throw "pg_restore of the scrubbed dump failed: $($restore.Err)" }
+  $nUsersFinal  = Invoke-Psql 'qip' 'SELECT count(*) FROM qip.auth_users'
+  $nUsableFinal = Invoke-Psql 'qip' "SELECT count(*) FROM qip.auth_users WHERE password NOT LIKE '!%'"
+  if ($nUsersFinal -ne $nUsers -or $nUsableFinal -ne $nUsable) { throw "fresh cluster has $nUsersFinal/$nUsableFinal accounts, expected $nUsers/$nUsable" }
   Write-Step "VACUUM, CHECKPOINT"
   Invoke-Psql 'qip' 'VACUUM ANALYZE' | Out-Null
   Invoke-Psql 'qip' 'CHECKPOINT' | Out-Null
@@ -531,7 +572,7 @@ try {
     $code = Invoke-Native $pgctl @('-D', $pgData, '-m', 'fast', '-w', '-t', '90', 'stop') $null
     if ($code -ne 0) { Write-Host "WARNING: pg_ctl stop returned $code" -ForegroundColor Red }
   }
-  if (Test-Path -LiteralPath $dumpFile) { Remove-Item -LiteralPath $dumpFile -Force }
+  if (Test-Path -LiteralPath $cleanDump) { Remove-Item -LiteralPath $cleanDump -Force }
 }
 if (Test-Path -LiteralPath (Join-Path $pgData 'postmaster.pid')) { throw "postmaster.pid is still in $pgData after pg_ctl stop" }
 Write-Host "  cluster stopped, no postmaster.pid ; pgdata $(Get-DirSizeMB $pgData) MB"
@@ -552,6 +593,7 @@ $djVer = (Invoke-Capture $python @('-c', 'import django; print(django.get_versio
 $info = @(
   "QIP UAT portable package - build info",
   "Package : $pkgName",
+  "Edition : UAT pre-release TEST build (not the production system)",
   "Built   : $(Get-Date -Format 'yyyy-MM-dd HH:mm')",
   "Commit  : $gitHash$gitDirty",
   "Python  : $pyVer (embeddable), Django $djVer, waitress",
@@ -587,7 +629,7 @@ foreach ($f in $all) {
     [void]$problems.Add("data file: $rel")
   }
   if ($f.Name -like '.env.prod*') { [void]$problems.Add("env file: $rel") }
-  if ($f.PSIsContainer -and $f.Name -in 'venv', '.venv', 'tests', '_pytest', 'pytest', 'pytest_django') { [void]$problems.Add("dir: $rel") }
+  if ($f.PSIsContainer -and $f.Name -in 'venv', '.venv', 'tests', '_pytest', 'pytest', 'pytest_django', '.pytest_cache', '.ruff_cache', '.mypy_cache') { [void]$problems.Add("dir: $rel") }
   if ($f.Name -eq 'postmaster.pid') { [void]$problems.Add("pid file: $rel") }
 }
 if ($problems.Count -gt 0) { $problems | ForEach-Object { Write-Host "  LEAK: $_" -ForegroundColor Red }; throw "The staged package is not clean ($($problems.Count) finding(s))." }
