@@ -115,3 +115,34 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy\portable\run-native.p
 * 這台開發機的 8011 埠常被 Docker 佔用（`com.docker.backend`／`wslrelay` 佔了 `0.0.0.0` 與 `::1`），要同時跑請設 `PORTABLE_PORT`（驗證時用 8012）。
 * 路由行為：有斜線的頁面（`/entry/login/`）直接回 HTML，無斜線的（`/entry/login`）回 302 到有斜線；不存在的路徑回 404；Django 的 `/api`、`/admin`、`/healthz` 照舊。
 * `_next/static/*` 的 `Cache-Control` 是 WhiteNoise 預設的 `max-age=60`；檔名帶雜湊，要更久可以之後再調。
+
+## 完整打包：同仁測試包（`build-uat-portable.ps1`，方案 C 步驟 4）
+
+產出 `local-data\uat\qip-uat-portable-<yyyymmdd>.zip`（＋`.sha256`）：同仁解壓、雙擊 `start.bat` 就能在一般使用者的 Windows 電腦上跑起整套
+（嵌入式 Python 的 Django＋waitress 同時供應 API 與靜態前端、可攜 PostgreSQL 16、一份開發資料的複本）。操作手冊見 `docs/UAT_GUIDE.md`。
+
+```powershell
+# 前置：build-runtime.ps1 做過一次（runtime-full）、快取裡有 PostgreSQL zip、開發堆疊的 postgres 容器在跑（只做 pg_dump）
+powershell -NoProfile -ExecutionPolicy Bypass -File deploy\portable\build-uat-portable.ps1 `
+    [-TestersCsv local-data\uat-testers.csv] [-AdminPassword <字串>] [-DropDavinciCases] [-OutDir local-data\uat] [-Clean]
+# 本機驗收（從 zip 解開實跑，不是從 staging）：
+python deploy\portable\verify-uat-portable.py --zip local-data\uat\qip-uat-portable-<日期>.zip `
+    --passwords local-data\uat\uat-testers-passwords-<日期>.md --work <空的暫存資料夾> --expect-port-fallback
+```
+
+| 檔案 | 用途 |
+|---|---|
+| `build-uat-portable.ps1` | 打包腳本（PowerShell 5.1、純 ASCII、可重跑；staging 在 `local-data\runtime-cache\stage-uat\`，每次重建） |
+| `launcher.py` | 進包成 `app\launcher.py`：`serve`（waitress，寫 `data\django.pid`／`django.port`，log 進 `logs\django.log`）、`manage`（把 `app\backend` 放進 `sys.path` 再跑 manage.py）、`health`（輪詢 `/healthz`） |
+| `package\start.bat`、`package\stop.bat` | 進包的雙擊啟動／停止（純 ASCII，打包時轉成 CRLF）。`QIP_NO_BROWSER=1` 可略過自動開瀏覽器（自動驗收用） |
+| `package\README-template.txt` | 同仁說明的範本（繁中），打包時填入示範帳號密碼與 BUILD-INFO，存成 UTF-8 BOM |
+| `verify-uat-portable.py` | 本機驗收：解 zip → `cmd /c start.bat` → HTTP／tasklist／netstat 檢查 → 停止 → 再啟動 → 模擬當機後復原 |
+
+* 資料庫：腳本在 staging 內 `initdb`（scram-sha-256、隨機密碼）→ 起一個暫時伺服器 → `docker compose exec postgres pg_dump -Fc --schema=qip`（唯讀）→ `pg_restore` →
+  `migrate --check` → `uat_seed_testers`（建同仁帳號／指派、重設 demo 密碼、**scrub** 其餘帳號的密碼、清 axes 與 session）→ `seed_admin --reset` → `VACUUM` → 停止。
+  包內密碼雜湊只有：CSV 同仁、demo、admin。
+* 密碼檔 `uat-testers-passwords-<日期>.md` 在 `-OutDir`，**不進包**；腳本只印「已產生」。
+* 打包時 PostgreSQL 若遇 5499 被占用會改用 5498 建置，但包內 `.env` 永遠是 5499（`start.bat` 以 5499 啟動；被占用就提示後結束）。
+* 嵌入式 runtime 會移除 pytest／pytest_django／_pytest／pluggy／iniconfig／pygments 與第三方套件的 `tests` 資料夾；後端複製時排除
+  `venv`、所有 `tests`、`.env*`、`conftest.py`、`staticfiles`（改由 `collectstatic` 重產）、`__pycache__`。
+* 包內檢查：zip 前掃描 staging，若出現 Excel／CSV、`.env.prod*`、`venv`、`tests`、pytest、`postmaster.pid` 就中止。
