@@ -3,7 +3,7 @@ Permission layer tests (Phase 2: viewer role + backend permissions).
 
 Guard rails
   test_every_api_route_refuses_anonymous    no /api/ route is open to anonymous callers
-                                            (only /api/auth/login is exempt)
+                                            (only /api/auth/login and /api/auth/options are exempt)
   test_matrix_declares_every_api_route      every route has a decision in MATRIX, so a new
                                             endpoint cannot ship without choosing a role
   test_matrix_covers_every_drf_method       ... and so does every HTTP method a DRF view accepts
@@ -50,7 +50,7 @@ pytestmark = pytest.mark.django_db
 
 # ── Route discovery ──────────────────────────────────────────────
 
-PUBLIC_ROUTES = {"/api/auth/login"}
+PUBLIC_ROUTES = {"/api/auth/login", "/api/auth/options"}
 
 _PARAM = re.compile(r"<(?:(?P<conv>\w+):)?(?P<name>\w+)>")
 _FILL_BY_NAME = {"code": "HA01-01", "campus": "zhubei"}
@@ -222,12 +222,15 @@ def test_every_api_route_refuses_anonymous(client_for):
     assert not failures, "routes reachable without signing in:\n" + "\n".join(failures)
 
 
-def test_login_is_the_only_public_route(client_for):
-    """The exception to the meta-test really is reachable anonymously."""
+def test_login_and_options_are_the_only_public_routes(client_for):
+    """The exceptions to the meta-test really are reachable anonymously."""
     assert {r for r, _ in api_routes() if r in PUBLIC_ROUTES} == PUBLIC_ROUTES
     resp = call(client_for(), "POST", "/api/auth/login")
     assert resp.status_code == 400  # validation error, not 401/403
     assert "employee_id" in body(resp)
+    options = call(client_for(), "GET", "/api/auth/options")
+    assert options.status_code == 200
+    assert body(options) == {"ldap_enabled": False}
 
 
 def test_matrix_declares_every_api_route():

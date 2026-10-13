@@ -14,6 +14,15 @@ export interface User {
   roles: UserRole[]
   is_active: boolean
   must_change_password: boolean
+  /** 'ldap' = signs in with the AD password; 'local' = LDAP is off or the account is on the local-only list. */
+  auth_source: 'ldap' | 'local'
+  /** How this session was authenticated; only login and me carry it. */
+  auth_method?: 'ldap' | 'local' | null
+}
+
+/** GET /api/auth/options (no login needed). */
+export interface AuthOptions {
+  ldap_enabled: boolean
 }
 
 export interface UserCreatePayload {
