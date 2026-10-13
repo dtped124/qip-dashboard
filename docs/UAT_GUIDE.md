@@ -148,7 +148,7 @@ python deploy\portable\verify-uat-portable.py --zip local-data\uat\qip-uat-porta
 
 同仁版的包**不含任何 AD 設定**。要在院內網域電腦上驗證 AD 登入（Phase 9），只在你自己那一份解壓後的包裡做，**不要把改過的包發給同仁**：
 
-1. 用文字編輯器開 `appackend\.env`，在最後加上（值向資訊室或醫中系統的設定取得；鍵名與醫中系統相同）：
+1. 用文字編輯器開 `app\backend\.env`，在最後加上（值向資訊室或醫中系統的設定取得；鍵名與醫中系統相同）：
    ```
    LDAP_ENABLED=true
    LDAP_SERVER_IP=
@@ -162,8 +162,8 @@ python deploy\portable\verify-uat-portable.py --zip local-data\uat\qip-uat-porta
 2. `stop.bat` 再 `start.bat`；視窗裡要看到 `[bootstrap] AD 驗證：啟用（…）`。看到「未啟用」代表 `.env` 沒生效。
 3. 服務帳號與查詢測試（不送任何使用者密碼）：在包的根目錄開 `cmd`，執行
    ```
-   runtime\python\python.exe -X utf8 -c "import sys, runpy; sys.path.insert(0, r'appackend'); sys.argv=['manage.py','ldap_check','--user','<你的員編>']; runpy.run_path(r'appackend\manage.py', run_name='__main__')"
+   runtime\python\python.exe -X utf8 -c "import sys, runpy; sys.path.insert(0, r'app\backend'); sys.argv=['manage.py','ldap_check','--user','<你的員編>']; runpy.run_path(r'app\backend\manage.py', run_name='__main__')"
    ```
-   （`manage.py` 讀 `appackend\.env`；`--audit` 會列出本地啟用帳號在 AD 查無者。）
+   （`manage.py` 讀 `app\backend\.env`；`--audit` 會列出本地啟用帳號在 AD 查無者。）
 4. 瀏覽器實測：先用 `admin` 在帳號管理頁建一個與你員編相同的帳號（角色隨意、不設密碼）；登出後用員編＋AD 密碼登入 → 應成功且不被要求改密碼；AD 密碼打錯 → 「帳號或密碼錯誤」，5 次鎖 5 分鐘（解鎖：`unlock_account <員編>`，呼叫方式同第 3 步把 `ldap_check` 換成 `unlock_account`）；系統沒建帳號的員編 → 「AD 驗證成功，但系統尚未開通此帳號，請洽品管中心」。
 5. 測完把 `.env` 裡的 LDAP 五行刪掉或 `LDAP_ENABLED=false`，再 `stop.bat`／`start.bat`。結果照 `docs/ACCEPTANCE_GUIDE.md` §7A 勾選。
