@@ -207,10 +207,11 @@ def test_scrub_alone_needs_no_out_and_empties_axes_and_sessions(world, tmp_path)
 
 def test_csv_account_clears_an_existing_login_lock(world, tmp_path):
     User.objects.create_user(username="T001", employee_id="T001", full_name="A", roles=["viewer"])
-    AccessAttempt.objects.create(username="T001", ip_address="127.0.0.1", failures_since_start=9)
+    # axes stores case-folded usernames since the AD phase (lockout.axes_username)
+    AccessAttempt.objects.create(username="t001", ip_address="127.0.0.1", failures_since_start=9)
     path = write_csv(tmp_path, "T001,A,viewer,,\n")
     run(tmp_path, csv_path=path)
-    assert not AccessAttempt.objects.filter(username="T001").exists()
+    assert not AccessAttempt.objects.filter(username__iexact="T001").exists()
 
 
 # ── shared role accounts (--default-roster) ───────────────────────────────
