@@ -23,8 +23,8 @@ import {
 } from './promptBuilder';
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
-const TIMEOUT_MS = 60_000;
-const MAX_TOKENS = 4096;
+const TIMEOUT_MS = 120_000;
+const MAX_TOKENS = 16000;
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const KEY_PREFIX = 'qip_ai_cache_';
 

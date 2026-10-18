@@ -119,9 +119,20 @@ export function hasApiKey(): boolean {
   return !!localStorage.getItem(STORAGE_KEY);
 }
 
-/** 讀取目前模型設定（預設 claude-sonnet-4-6） */
+export const DEFAULT_MODEL = 'claude-sonnet-5-5';
+
+/** 舊版模型 ID → 同級最新模型（已存的設定自動升級） */
+const LEGACY_MODEL_MAP: Record<string, string> = {
+  'claude-sonnet-4-6': 'claude-sonnet-5-5',
+  'claude-opus-4-6': 'claude-opus-5-5',
+  'claude-haiku-4-5-20251001': 'claude-haiku-5-5',
+};
+
+/** 讀取目前模型設定（預設 claude-sonnet-5-5） */
 export function getModelSetting(): string {
-  return localStorage.getItem('qip_ai_model') || 'claude-sonnet-4-6';
+  const stored = localStorage.getItem('qip_ai_model');
+  if (!stored) return DEFAULT_MODEL;
+  return LEGACY_MODEL_MAP[stored] ?? stored;
 }
 
 /** 儲存模型設定 */

@@ -5,7 +5,7 @@ import { Bot, Eye, EyeOff, CheckCircle2, XCircle, Trash2, BarChart2, ArrowLeft }
 import Link from 'next/link';
 import {
   saveApiKey, loadApiKey, clearApiKey, hasApiKey,
-  validateApiKeyFormat, getModelSetting, setModelSetting,
+  validateApiKeyFormat, getModelSetting, setModelSetting, DEFAULT_MODEL,
   isAIEnabled, setAIEnabled,
 } from '@/lib/ai/apiKeyManager';
 import {
@@ -15,9 +15,9 @@ import {
 import { getCacheStats, clearAllAICache } from '@/lib/ai/cache';
 
 const AVAILABLE_MODELS = [
-  { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6（建議）', note: '速度快、品質好、費用適中' },
-  { id: 'claude-opus-4-6',   label: 'Claude Opus 4.6（最強）',   note: '分析最深入，費用較高' },
-  { id: 'claude-haiku-4-5-20251001',  label: 'Claude Haiku 4.5（最快）',  note: '速度最快、費用最低，適合頻繁使用' },
+  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5（建議）', note: '速度快、品質好、費用適中' },
+  { id: 'claude-opus-5-5',   label: 'Claude Opus 5.5（最強）',   note: '分析最深入，費用較高' },
+  { id: 'claude-haiku-5-5',  label: 'Claude Haiku 5.5（最快）',  note: '速度最快、費用最低，適合頻繁使用' },
 ];
 
 export default function AISettingsPage() {
@@ -28,7 +28,7 @@ export default function AISettingsPage() {
   const [saveResult, setSaveResult] = useState<'success' | 'error' | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<'ok' | 'fail' | null>(null);
-  const [selectedModel, setSelectedModel] = useState('claude-sonnet-4-6');
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
   const [cacheStats, setCacheStats] = useState({ count: 0, oldestDate: null as Date | null });
   const [usage, setUsage] = useState<ReturnType<typeof getMonthlyUsage> | null>(null);
   const [aiEnabled, setAiEnabledState] = useState(false);
