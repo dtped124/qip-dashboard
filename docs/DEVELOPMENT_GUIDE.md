@@ -273,15 +273,7 @@ for item in items:
 
 ### 7. Next.js Static Export
 
-```javascript
-// next.config.mjs
-const nextConfig = {
-  output: process.env.STATIC_EXPORT === "true" ? "export" : undefined,
-  // ...
-}
-```
-
-Portable 版本：`STATIC_EXPORT=true npm run build`，資料改從 `/api/v1/indicators/export/` 匯出的 JSON 載入至 IndexedDB。
+綠色版用的純靜態匯出已實作，指令與限制見下方〈靜態匯出（綠色版用）〉；舊版的 `STATIC_EXPORT=true` 開關已不存在。
 
 ### 8. Dexie IndexedDB schema
 
@@ -361,8 +353,8 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 ```bash
 npm run build
 npm start               # SSR 模式（本機）
-# 或 Portable
-STATIC_EXPORT=true npm run build   # → out/
+# 或 Portable（綠色版）
+npm run build:export    # → out/，見下方〈靜態匯出（綠色版用）〉
 # 容器：docker build -f Dockerfile.web -t qip-web .   （NEXT_OUTPUT=standalone；API_INTERNAL_URL 等在 build 時固化）
 ```
 
@@ -376,6 +368,44 @@ docker compose exec api python manage.py migrate
 容器啟動時的 `manage.py bootstrap` 會自動做：建 `qip` schema → `migrate` → `seed_entry_base --only-missing`、`seed_indicators --only-missing` → （有 `SEED_ADMIN_PASSWORD` 才）`seed_admin`。手動操作：
 1. `python manage.py bootstrap`（可重複執行）
 2. 前往 `/settings/tcpi` 匯入 TCPI 標竿
+
+---
+
+## 📦 靜態匯出（綠色版用）
+
+綠色版的同仁電腦跑不了 node.exe，改由嵌入式 Python 的 Django 直接供應前端靜態檔（與 `/api` 同源），所以沒有 Next 伺服器可用，所有頁面都必須在 build 時預先產出。
+
+| | 一般 build（`npm run build`） | 靜態匯出（`npm run build:export`） |
+|---|---|---|
+| 環境變數 | 無（Docker 用 `NEXT_OUTPUT=standalone`） | `NEXT_OUTPUT=export`（由 `scripts/build-export.mjs` 設定，Windows／Linux 通用） |
+| 產出 | `.next/`，需 `next start` 或 standalone server | `out/`：純 HTML／JS／CSS（約 150 頁、5 MB） |
+| `rewrites()`（`/api` 轉發 Django） | 有 | **沒有**（export 不支援） |
+| `headers()`（HSTS） | 有（`NEXT_HSTS_SECONDS`） | **沒有** |
+| `trailingSlash` / `images.unoptimized` | 預設 | `true` / `true`（頁面為 `/x/index.html`） |
+| 動態路由未列出的參數 | 照常即時產生、可開 | 404（只有清單內的參數有頁面） |
+
+```bash
+npm run build:export        # 產出 out/
+python -m http.server 3011 --directory out   # 臨時檢查頁面是否存在（API 不通是正常的）
+```
+
+注意事項：
+
+- **`/api` 必須同源由後端供應**：`lib/http.ts` 以相對路徑 `/api/...` 呼叫（`NEXT_PUBLIC_API_URL` 為空），匯出版沒有轉發，供應 `out/` 的 Django 必須同時提供 `/api`。用 `http.server` 開只能看頁面，打 API 會 404。
+- **`.next/` 與 `out/` 共用建置快取**：`build:export` 之後要跑 `next start`，需重新 `npm run build`。兩者互不影響各自的行為，但不要在跑著 `next dev`／`next start` 的同一個目錄裡建置。
+- **動態路由參數清單**在 `lib/export/staticParams.ts`（純常數），由各動態段資料夾的 `layout.export.tsx` 的 `generateStaticParams` 讀取（client page 不能自己 export 它）：
+
+  | 路由 | 參數來源 | 頁數 |
+  |---|---|---|
+  | `/category/[id]` | `lib/constants.ts` `CATEGORY_ORDER` | 10 |
+  | `/entry/[category]` | `seed_entry_base.py` 面向 HA01–HA10 | 10 |
+  | `/entry/review/campus/[campus]/[category]` | `seed_entry_base.py` 院區 × 面向 | 3 × 10 = 30 |
+  | `/entry/case-list/[indicator]` | `backend/apps/indicators/constants.py` `INDICATOR_META` | 39 |
+  | `/indicators/[code]` | 同上 | 39 |
+  | `/davinci/[code]` | `backend/apps/davinci/constants.py` `DAVINCI_INDICATORS`（DV01–DV07） | 7 |
+
+- **同步規則**：後端 seed 變動（新增院區、面向、指標、達文西指標）時，要手動同步 `lib/export/staticParams.ts` 再重新 `build:export`；漏列的指標在綠色版沒有頁面（開了是 404）。透過介面新增、不在 seed 內的指標同樣沒有頁面。
+- 這些 `layout.export.tsx` 只在匯出模式被當成 layout（`next.config.mjs` 在 `NEXT_OUTPUT=export` 時才把 `export.tsx` 加進 `pageExtensions`）；一般 build 完全不載入它們，路由表與沒有綠色版時相同（動態路由都是 ƒ），清單外的路徑（例如 `/indicators/ZZ99-99`）仍照常即時產生。
 
 ---
 

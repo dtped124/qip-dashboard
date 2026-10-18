@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:export": "node scripts/build-export.mjs",
     "start": "next start",
     "lint": "next lint",
     "test:unit": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test lib/auth/*.test.ts lib/entry/*.test.ts lib/import/*.test.ts"
