@@ -4,9 +4,9 @@
  * 追蹤月度 token 使用量與預估費用。
  * 資料存於 localStorage，每月重置。
  *
- * 費用基準（claude-sonnet-4-6，USD）：
- *   Input:  $3.00 / 1M tokens
- *   Output: $15.00 / 1M tokens
+ * 費用基準（claude-sonnet-5-5，USD）：
+ *   Input:  $2.00 / 1M tokens
+ *   Output: $10.00 / 1M tokens
  */
 
 const STORAGE_KEY = 'qip_ai_usage';
@@ -14,9 +14,9 @@ const SOFT_LIMIT_USD = 5.0; // 軟上限：顯示警告但允許繼續
 
 // 費率（USD per token）
 const PRICE = {
-  'claude-sonnet-4-6': { input: 3.0 / 1_000_000, output: 15.0 / 1_000_000 },
-  'claude-opus-4-6':   { input: 15.0 / 1_000_000, output: 75.0 / 1_000_000 },
-  'claude-haiku-4-5-20251001':  { input: 0.25 / 1_000_000, output: 1.25 / 1_000_000 },
+  'claude-sonnet-5-5': { input: 2.0 / 1_000_000, output: 10.0 / 1_000_000 },
+  'claude-opus-5-5':   { input: 4.0 / 1_000_000, output: 20.0 / 1_000_000 },
+  'claude-haiku-5-5':  { input: 0.1 / 1_000_000, output: 0.5 / 1_000_000 },
 } as const;
 
 export interface MonthlyUsage {
@@ -53,7 +53,7 @@ function emptyUsage(month: string): MonthlyUsage {
 }
 
 function calcCost(inputTokens: number, outputTokens: number, model: string): number {
-  const rate = PRICE[model as keyof typeof PRICE] ?? PRICE['claude-sonnet-4-6'];
+  const rate = PRICE[model as keyof typeof PRICE] ?? PRICE['claude-sonnet-5-5'];
   return inputTokens * rate.input + outputTokens * rate.output;
 }
 

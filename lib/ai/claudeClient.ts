@@ -19,8 +19,8 @@ import { getCached, setCached, computeDataHash } from './cache';
 import { recordUsage, isOverSoftLimit, getSoftLimitUSD } from './usageTracker';
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
-const TIMEOUT_MS = 60_000; // 60 秒
-const MAX_TOKENS = 4096;
+const TIMEOUT_MS = 120_000; // 120 秒（新模型預設會先思考，需較長時間）
+const MAX_TOKENS = 16000; // 含思考 token，只依實際用量計費
 
 export interface AIAnalysisResult {
   parsed: ParsedAnalysis | null;
